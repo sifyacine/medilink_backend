@@ -1,22 +1,19 @@
-"""
-URL configuration for core project.
 
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/6.0/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-"""
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    
+    # Authentication endpoints (django-allauth + dj-rest-auth)
+    path('api/v1/auth/', include('dj_rest_auth.urls')),  # login, logout, password reset, etc.
+    path('api/v1/auth/register/', include('dj_rest_auth.registration.urls')),  # registration
+    
+    # django-allauth URLs (for email verification pages)
+    path('accounts/', include('allauth.urls')),
+    
+    # Your app URLs will be added here
+    # path('api/v1/patients/', include('apps.patients.urls')),
+    # path('api/v1/doctors/', include('apps.doctors.urls')),
+    # etc.
 ]
