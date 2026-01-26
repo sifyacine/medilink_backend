@@ -4,6 +4,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
+*.egg-info/
+dist/
+build/
 venv/
 env/
 ENV/
@@ -12,15 +15,37 @@ ENV/
 *.log
 local_settings.py
 db.sqlite3
+db.sqlite3-journal
 media/
+*/migrations/
+!*/migrations/__init__.py
 
 # IDE
 .vscode/
 .idea/
 *.sublime-*
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
+# Environment
 .env
+.env.local
+.env.*.local
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE specific
+.vscode/settings.json
