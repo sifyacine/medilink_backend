@@ -23,7 +23,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SECRET_KEY = env('SECRET_KEY')
 DEBUG = env('DEBUG')
 
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
+ALLOWED_HOSTS = env.list(
+    'ALLOWED_HOSTS',
+    default=[
+        'localhost',
+        'localhost:3000',
+        'localhost:5173',
+        'localhost:8000',
+        '127.0.0.1:3000',
+        '127.0.0.1:5173',
+        '127.0.0.1:8000',
+        '127.0.0.1',
+        'dzmedilink.netlify.app',
+        'dzmedilink.duckdns.org',
+    ],
+)
 
 # Application definition
 
@@ -69,10 +83,17 @@ SITE_ID = 1
 
 # CORS Configuration
 CORS_ALLOW_ALL_ORIGINS = env.bool('CORS_ALLOW_ALL_ORIGINS', default=True)  # Set to False in production
-CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
-    'http://localhost:3000',  # React/Next.js frontend
-    'http://localhost:8080',  # Flutter web
-])
+CORS_ALLOWED_ORIGINS = env.list(
+    'CORS_ALLOWED_ORIGINS',
+    default=[
+        'http://localhost:3000',  # React/Next.js frontend
+        'http://localhost:8080',  # Flutter web
+        'http://localhost:5173',  # Vite dev server
+        'http://localhost:8000',  # Local Django (for tools / proxies)
+        'https://dzmedilink.netlify.app',  # Deployed frontend
+        'http://dzmedilink.duckdns.org',  # Deployed backend
+    ],
+)
 
 # REST Framework Configuration
 REST_FRAMEWORK = {
