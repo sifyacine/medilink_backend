@@ -1,19 +1,39 @@
-
 from django.contrib import admin
 from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     
-    # Authentication endpoints (django-allauth + dj-rest-auth)
-    path('api/v1/auth/', include('dj_rest_auth.urls')),  # login, logout, password reset, etc.
-    path('api/v1/auth/register/', include('dj_rest_auth.registration.urls')),  # registration
+    # Authentication endpoints
+    path('api/auth/', include('accounts.urls')),
     
-    # django-allauth URLs (for email verification pages)
+    # Provider endpoints
+    path('api/provider/', include('providers.urls')),
+    
+    # Admin endpoints
+    path('api/admin/', include('admins.urls')),
+    
+    # Specialties endpoints
+    path('api/specialties/', include('specialties.urls')),
+    
+    # Services endpoints
+    path('api/services/', include('services.urls')),
+    
+    # Address endpoints
+    path('api/addresses/', include('address.urls')),
+    
+    # Social media endpoints
+    path('api/social-links/', include('social_media.urls')),
+    
+    # Medical records endpoints
+    path('api/medical-records/', include('medical_record.urls')),
+    
+    # django-allauth URLs (for email verification pages if needed)
     path('accounts/', include('allauth.urls')),
-    
-    # Your app URLs will be added here
-    # path('api/v1/patients/', include('apps.patients.urls')),
-    # path('api/v1/doctors/', include('apps.doctors.urls')),
-    # etc.
 ]
+
+if settings.DEBUG:
+    # Serve media files (profile images, documents, etc.) in development
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

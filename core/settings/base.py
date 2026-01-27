@@ -28,23 +28,24 @@ ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['localhost', '127.0.0.1'])
 # Application definition
 
 INSTALLED_APPS = [
+    # django-allauth
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+    
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'django.contrib.sites',  # Required by allauth
+    'django.contrib.sites',  
     
     # Third-party apps
     'rest_framework',
-    'rest_framework.authtoken',  # Required by dj-rest-auth
+    'rest_framework.authtoken',  # Token authentication
+    'django_filters',  # For filtering
     'corsheaders',
-    
-    # django-allauth
-    'allauth',
-    'allauth.account',
-    'allauth.socialaccount',  # Optional: for social auth (Google, Facebook, etc.)
     # 'allauth.socialaccount.providers.google',  # Uncomment when needed
     # 'allauth.socialaccount.providers.facebook',  # Uncomment when needed
     
@@ -52,8 +53,16 @@ INSTALLED_APPS = [
     'dj_rest_auth',
     'dj_rest_auth.registration',
     
-    # Your apps (will be added here)
-    # 'apps.accounts',
+    # Local apps
+    'accounts',
+    'providers',
+    'admins',
+    'common',
+    'address',
+    'services',
+    'specialties',
+    'social_media',
+    'medical_record',
 ]
 
 SITE_ID = 1
@@ -71,8 +80,8 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
-        'dj_rest_auth.jwt_auth.JWTCookieAuthentication',  # JWT via cookies
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
@@ -82,24 +91,12 @@ REST_FRAMEWORK = {
     ],
 }
 
-# JWT Configuration
+# dj-rest-auth Configuration (Token-based, not JWT)
 REST_AUTH = {
-    'USE_JWT': True,
-    'JWT_AUTH_HTTPONLY': False,  # Set to True in production for better security
-    'JWT_AUTH_COOKIE': 'medilink-auth',
-    'JWT_AUTH_REFRESH_COOKIE': 'medilink-refresh-token',
-    'USER_DETAILS_SERIALIZER': 'dj_rest_auth.serializers.UserDetailsSerializer',
-    'REGISTER_SERIALIZER': 'dj_rest_auth.registration.serializers.RegisterSerializer',
-}
-
-from datetime import timedelta
-
-SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=1),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
-    'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': True,
-    'AUTH_HEADER_TYPES': ('Bearer',),
+    'USE_JWT': False,  # Use token authentication instead
+    'TOKEN_MODEL': 'rest_framework.authtoken.models.Token',
+    'USER_DETAILS_SERIALIZER': 'accounts.serializers.user.UserSerializer',
+    'REGISTER_SERIALIZER': 'accounts.serializers.auth.CustomRegisterSerializer',
 }
 
 # Django-allauth Configuration
@@ -108,22 +105,26 @@ AUTHENTICATION_BACKENDS = [
     'allauth.account.auth_backends.AuthenticationBackend',  # django-allauth
 ]
 
+# django-allauth Configuration for API usage
 ACCOUNT_AUTHENTICATION_METHOD = 'email'  # Login with email instead of username
 ACCOUNT_EMAIL_REQUIRED = True
 ACCOUNT_USERNAME_REQUIRED = False
-ACCOUNT_EMAIL_VERIFICATION = 'mandatory'  # 'optional', 'mandatory', or 'none'
-ACCOUNT_CONFIRM_EMAIL_ON_GET = True
-ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
+ACCOUNT_EMAIL_VERIFICATION = 'none'  # Disable email verification for API (can enable later)
+ACCOUNT_CONFIRM_EMAIL_ON_GET = False
+ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = False
 
 # Email will be sent as lowercase
 ACCOUNT_PRESERVE_USERNAME_CASING = False
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 
+# Allow account creation without email verification for API
+ACCOUNT_ADAPTER = 'accounts.adapters.CustomAccountAdapter'
+
 # Prevent auto-signup on social login (require additional info)
 SOCIALACCOUNT_AUTO_SIGNUP = False
 
-# Custom user model (will be set after creating accounts app)
-# AUTH_USER_MODEL = 'accounts.User'
+# Custom user model
+AUTH_USER_MODEL = 'accounts.User'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -202,7 +203,11 @@ USE_I18N = True
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
+# Static & media files
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Media files (user-uploaded: profile images, documents, etc.)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
