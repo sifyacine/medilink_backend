@@ -42,33 +42,32 @@ ALLOWED_HOSTS = env.list(
 # Application definition
 
 INSTALLED_APPS = [
-    # django-allauth
-    'allauth',
-    'allauth.account',
-    'allauth.socialaccount',
-    
+    # Django core (MUST come first)
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'django.contrib.sites',  
-    
-    # Third-party apps
+    'django.contrib.sites',
+
+    # Third-party
     'rest_framework',
-    'rest_framework.authtoken',  # Token authentication
-    'django_filters',  # For filtering
+    'rest_framework.authtoken',
+    'django_filters',
     'corsheaders',
-    # 'allauth.socialaccount.providers.google',  # Uncomment when needed
-    # 'allauth.socialaccount.providers.facebook',  # Uncomment when needed
-    
+
+    # allauth (AFTER auth)
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+
     # dj-rest-auth
     'dj_rest_auth',
     'dj_rest_auth.registration',
-    
-    # Local apps
-    'accounts',
+
+    # Local apps (custom user BEFORE dependents)
+    'accounts',          # ⭐ custom user FIRST
     'providers',
     'admins',
     'common',
