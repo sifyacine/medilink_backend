@@ -6,12 +6,53 @@ from providers.models.doctor import Doctor, DoctorCertification
 from providers.serializers.status import ProviderStatusSerializer
 
 
+class DoctorSpecialtyListSerializer(serializers.Serializer):
+    """Lightweight serializer for doctor's specialties in profile response."""
+    id = serializers.IntegerField(source='specialty.id', read_only=True)
+    title = serializers.CharField(source='specialty.title', read_only=True)
+    title_ar = serializers.CharField(source='specialty.title_ar', read_only=True)
+    title_fr = serializers.CharField(source='specialty.title_fr', read_only=True)
+    slug = serializers.CharField(source='specialty.slug', read_only=True)
+    is_primary = serializers.BooleanField(read_only=True)
+    years_of_experience = serializers.IntegerField(read_only=True, allow_null=True)
+
+
+class DoctorServiceListSerializer(serializers.Serializer):
+    """Lightweight serializer for doctor's services in profile response."""
+    id = serializers.IntegerField(source='service.id', read_only=True)
+    title = serializers.CharField(source='service.title', read_only=True)
+    slug = serializers.CharField(source='service.slug', read_only=True)
+    description = serializers.CharField(source='service.description', read_only=True)
+    price = serializers.DecimalField(
+        source='service.price',
+        max_digits=10,
+        decimal_places=2,
+        read_only=True
+    )
+    custom_price = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        read_only=True,
+        allow_null=True
+    )
+    final_price = serializers.SerializerMethodField()
+    duration_minutes = serializers.IntegerField(source='service.duration_minutes', read_only=True)
+    is_home_service = serializers.BooleanField(source='service.is_home_service', read_only=True)
+    is_available = serializers.BooleanField(read_only=True)
+
+    def get_final_price(self, obj):
+        """Return custom_price if set, otherwise service price."""
+        return obj.custom_price if obj.custom_price else obj.service.price
+
+
 class DoctorSerializer(serializers.ModelSerializer):
     """Serializer for Doctor profile."""
     provider_status = ProviderStatusSerializer(source='provider', read_only=True)
     email = serializers.EmailField(source='provider.user.email', read_only=True)
     full_name = serializers.CharField(source='get_full_name', read_only=True)
     gender_display = serializers.CharField(source='get_gender_display', read_only=True)
+    specialties = serializers.SerializerMethodField()
+    services = serializers.SerializerMethodField()
     
     class Meta:
         model = Doctor
@@ -32,11 +73,31 @@ class DoctorSerializer(serializers.ModelSerializer):
             'is_verified',
             'is_available',
             'is_home_service_available',
+            'specialties',
+            'services',
             'provider_status',
             'created_at',
             'updated_at',
         ]
         read_only_fields = ['id', 'email', 'is_verified', 'created_at', 'updated_at']
+    
+    def get_specialties(self, obj):
+        """Return the doctor's specialties."""
+        try:
+            from specialties.models import DoctorSpecialty
+            doctor_specialties = DoctorSpecialty.objects.filter(doctor=obj).select_related('specialty')
+            return DoctorSpecialtyListSerializer(doctor_specialties, many=True).data
+        except Exception:
+            return []
+    
+    def get_services(self, obj):
+        """Return the doctor's services."""
+        try:
+            from services.models import DoctorService
+            doctor_services = DoctorService.objects.filter(doctor=obj).select_related('service')
+            return DoctorServiceListSerializer(doctor_services, many=True).data
+        except Exception:
+            return []
 
 
 class DoctorStatusSerializer(serializers.ModelSerializer):

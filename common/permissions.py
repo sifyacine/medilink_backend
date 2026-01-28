@@ -87,6 +87,104 @@ class IsProviderOrReadOnly(permissions.BasePermission):
         )
 
 
+class IsNurse(permissions.BasePermission):
+    """
+    Permission check: User must be authenticated, be a provider,
+    and have a nurse profile.
+    """
+    
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        
+        if not request.user.can_login:
+            return False
+        
+        if request.user.role != UserRole.PROVIDER:
+            return False
+        
+        # Check if user has a nurse profile
+        try:
+            provider = request.user.provider_profile
+            return hasattr(provider, 'nurse_profile') and provider.nurse_profile is not None
+        except Exception:
+            return False
+
+
+class IsDoctor(permissions.BasePermission):
+    """
+    Permission check: User must be authenticated, be a provider,
+    and have a doctor profile.
+    """
+    
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        
+        if not request.user.can_login:
+            return False
+        
+        if request.user.role != UserRole.PROVIDER:
+            return False
+        
+        # Check if user has a doctor profile
+        try:
+            provider = request.user.provider_profile
+            return hasattr(provider, 'doctor_profile') and provider.doctor_profile is not None
+        except Exception:
+            return False
+
+
+class IsClinic(permissions.BasePermission):
+    """
+    Permission check: User must be authenticated, be a provider,
+    and have a clinic profile.
+    """
+    
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        
+        if not request.user.can_login:
+            return False
+        
+        if request.user.role != UserRole.PROVIDER:
+            return False
+        
+        # Check if user has a clinic profile
+        try:
+            provider = request.user.provider_profile
+            return hasattr(provider, 'clinic_profile') and provider.clinic_profile is not None
+        except Exception:
+            return False
+
+
+class IsDoctorOrClinic(permissions.BasePermission):
+    """
+    Permission check: User must be authenticated, be a provider,
+    and have either a doctor or clinic profile.
+    """
+    
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        
+        if not request.user.can_login:
+            return False
+        
+        if request.user.role != UserRole.PROVIDER:
+            return False
+        
+        # Check if user has a doctor or clinic profile
+        try:
+            provider = request.user.provider_profile
+            has_doctor = hasattr(provider, 'doctor_profile') and provider.doctor_profile is not None
+            has_clinic = hasattr(provider, 'clinic_profile') and provider.clinic_profile is not None
+            return has_doctor or has_clinic
+        except Exception:
+            return False
+
+
 class IsOwnerOrAdmin(permissions.BasePermission):
     """
     Object-level permission: User can only access their own resources,

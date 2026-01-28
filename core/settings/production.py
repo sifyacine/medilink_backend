@@ -19,6 +19,7 @@ CORS_ALLOWED_ORIGINS = env.list(
 	default=[
 		'https://dzmedilink.netlify.app',
 		'http://dzmedilink.duckdns.org',
+		'https://dzmedilink.duckdns.org',
 		'http://localhost:3000',
 		'http://localhost:5173',
 		'http://localhost:8000',

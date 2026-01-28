@@ -16,3 +16,9 @@ dj-rest-auth==5.0.2
 # Filtering
 django-filter==24.3
 Pillow==12.1.0
+
+# Firebase for push notifications
+firebase-admin==6.4.0
+
+# PDF generation
+reportlab==4.1.0

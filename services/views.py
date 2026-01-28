@@ -14,23 +14,34 @@ from services.serializers import (
     DoctorServiceSerializer,
     NurseServiceSerializer,
 )
-from common.permissions import IsAdmin, IsVerifiedProvider
+from common.permissions import IsAdmin, IsDoctor, IsNurse, IsDoctorOrClinic
+from common.enums import ProviderType
 from rest_framework import serializers
 
 
 class ServiceViewSet(viewsets.ModelViewSet):
     """
-    CRUD operations for Services.
+    CRUD operations for Services (Global Catalog).
     
-    GET /api/services/ - List all active services
-    GET /api/services/{id}/ - Get service details
-    POST /api/services/ - Create service (admin only)
+    Services are a global catalog. Providers do not own services directly.
+    Provider ↔ Service relationships are handled via linking tables (DoctorService, NurseService).
+    
+    Permissions:
+    - Clinics: Can create services (global catalog)
+    - Doctors: Can create services (auto-attached via DoctorService)
+    - Nurses: Cannot create services
+    - Admins: Full access
+    - Public: Read-only access to active services
+    
+    GET /api/services/ - List all active services (public)
+    GET /api/services/{id}/ - Get service details (public)
+    POST /api/services/ - Create service (doctor/clinic/admin only)
     PUT /api/services/{id}/ - Update service (admin only)
     DELETE /api/services/{id}/ - Delete service (admin only)
     """
     queryset = Service.objects.filter(is_active=True)
     serializer_class = ServiceSerializer
-    permission_classes = [AllowAny]  # Public read, admin write
+    permission_classes = [AllowAny]  # Public read, restricted write
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['is_home_service', 'is_active', 'specialty']
     search_fields = ['title', 'description']
@@ -38,8 +49,15 @@ class ServiceViewSet(viewsets.ModelViewSet):
     ordering = ['title']
     
     def get_permissions(self):
-        """Admin required for write operations."""
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        """
+        Permissions based on action:
+        - create: Doctor, Clinic, or Admin
+        - update/partial_update/destroy: Admin only
+        - read: Public
+        """
+        if self.action == 'create':
+            return [IsAuthenticated(), IsDoctorOrClinic() | IsAdmin()]
+        elif self.action in ['update', 'partial_update', 'destroy']:
             return [IsAuthenticated(), IsAdmin()]
         return [AllowAny()]
     
@@ -48,25 +66,56 @@ class ServiceViewSet(viewsets.ModelViewSet):
         if self.request.user.is_authenticated and self.request.user.role == 'ADMIN':
             return Service.objects.all()
         return Service.objects.filter(is_active=True)
+    
+    def perform_create(self, serializer):
+        """
+        Create a service with role-based auto-attach behavior:
+        - Doctor creates: Create Service + auto-create DoctorService
+        - Clinic creates: Create Service only (global catalog, no attachment)
+        - Admin creates: Create Service only
+        """
+        service = serializer.save()
+        
+        # Check if creator is a doctor - auto-attach the service
+        user = self.request.user
+        if user.role == 'PROVIDER':
+            try:
+                provider = user.provider_profile
+                if provider.provider_type == ProviderType.DOCTOR:
+                    doctor = provider.doctor_profile
+                    # Auto-create DoctorService relationship
+                    DoctorService.objects.get_or_create(
+                        doctor=doctor,
+                        service=service,
+                        defaults={'is_available': True}
+                    )
+            except Exception:
+                pass  # If doctor profile doesn't exist, just create the service
+        
+        return service
 
 
 class DoctorServiceViewSet(viewsets.ModelViewSet):
     """
     CRUD operations for Doctor Services.
     
-    GET /api/doctor-services/ - List doctor's services
-    POST /api/doctor-services/ - Assign service to doctor
-    PUT /api/doctor-services/{id}/ - Update doctor service
-    DELETE /api/doctor-services/{id}/ - Remove service from doctor
+    Allows doctors to manage which services they offer.
+    
+    GET /api/services/doctor-services/ - List doctor's services
+    POST /api/services/doctor-services/ - Assign service to doctor
+    PUT /api/services/doctor-services/{id}/ - Update doctor service (custom price, availability)
+    DELETE /api/services/doctor-services/{id}/ - Remove service from doctor
+    
+    Permissions: Only authenticated doctors can access.
     """
     serializer_class = DoctorServiceSerializer
-    permission_classes = [IsAuthenticated, IsVerifiedProvider]
+    permission_classes = [IsAuthenticated, IsDoctor]
     
     def get_queryset(self):
         """Return services for the authenticated doctor."""
         try:
             doctor = self.request.user.provider_profile.doctor_profile
-            return DoctorService.objects.filter(doctor=doctor)
+            return DoctorService.objects.filter(doctor=doctor).select_related('service')
         except Exception:
             return DoctorService.objects.none()
     
@@ -78,32 +127,34 @@ class DoctorServiceViewSet(viewsets.ModelViewSet):
             
             # Check if already assigned
             if DoctorService.objects.filter(doctor=doctor, service=service).exists():
-                raise serializers.ValidationError('Service already assigned to this doctor.')
+                raise serializers.ValidationError({'service': 'Service already assigned to this doctor.'})
             
             serializer.save(doctor=doctor)
         except AttributeError:
-            raise serializers.ValidationError('Doctor profile not found.')
-        except Exception as e:
-            raise serializers.ValidationError(f'Error assigning service: {str(e)}')
+            raise serializers.ValidationError({'detail': 'Doctor profile not found.'})
 
 
 class NurseServiceViewSet(viewsets.ModelViewSet):
     """
     CRUD operations for Nurse Services.
     
-    GET /api/nurse-services/ - List nurse's services
-    POST /api/nurse-services/ - Assign service to nurse
-    PUT /api/nurse-services/{id}/ - Update nurse service
-    DELETE /api/nurse-services/{id}/ - Remove service from nurse
+    Allows nurses to manage which services they offer.
+    
+    GET /api/services/nurse-services/ - List nurse's services
+    POST /api/services/nurse-services/ - Assign service to nurse
+    PUT /api/services/nurse-services/{id}/ - Update nurse service (custom price, availability)
+    DELETE /api/services/nurse-services/{id}/ - Remove service from nurse
+    
+    Permissions: Only authenticated nurses can access.
     """
     serializer_class = NurseServiceSerializer
-    permission_classes = [IsAuthenticated, IsVerifiedProvider]
+    permission_classes = [IsAuthenticated, IsNurse]
     
     def get_queryset(self):
         """Return services for the authenticated nurse."""
         try:
             nurse = self.request.user.provider_profile.nurse_profile
-            return NurseService.objects.filter(nurse=nurse)
+            return NurseService.objects.filter(nurse=nurse).select_related('service')
         except Exception:
             return NurseService.objects.none()
     
@@ -115,9 +166,11 @@ class NurseServiceViewSet(viewsets.ModelViewSet):
             
             # Check if already assigned
             if NurseService.objects.filter(nurse=nurse, service=service).exists():
-                raise serializers.ValidationError('Service already assigned to this nurse.')
+                raise serializers.ValidationError({'service': 'Service already assigned to this nurse.'})
             
             serializer.save(nurse=nurse)
+        except AttributeError:
+            raise serializers.ValidationError({'detail': 'Nurse profile not found.'})
         except AttributeError:
             raise serializers.ValidationError('Nurse profile not found.')
         except Exception as e:

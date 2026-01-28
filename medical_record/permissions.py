@@ -4,6 +4,41 @@ Permission classes for Medical Records app.
 from rest_framework import permissions
 from accounts.models import User
 from common.enums import UserRole
+from django.utils import timezone
+
+
+def has_provider_access(provider, patient, required_access='READ_ONLY'):
+    """
+    Check if a provider has valid access to a patient's records.
+    
+    Args:
+        provider: Provider instance
+        patient: User instance (patient)
+        required_access: 'READ_ONLY', 'FULL', or 'LIMITED'
+    
+    Returns:
+        bool: True if provider has valid access
+    """
+    from medical_record.models import ProviderAccess
+    
+    try:
+        access = ProviderAccess.objects.get(
+            provider=provider,
+            patient=patient,
+            is_active=True
+        )
+        
+        # Check expiration
+        if access.expires_at and timezone.now() > access.expires_at:
+            return False
+        
+        # Check access level
+        if required_access == 'FULL' and access.access_type != 'FULL':
+            return False
+        
+        return True
+    except ProviderAccess.DoesNotExist:
+        return False
 
 
 class IsPatientOwnerOrAuthorizedProvider(permissions.BasePermission):
@@ -12,7 +47,7 @@ class IsPatientOwnerOrAuthorizedProvider(permissions.BasePermission):
     
     Allows access if:
     - User is the patient who owns the record, OR
-    - User is an authorized provider (approved status), OR
+    - User is an authorized provider with valid access grant, OR
     - User is an admin
     """
     
@@ -50,14 +85,21 @@ class IsPatientOwnerOrAuthorizedProvider(permissions.BasePermission):
         if request.user.role == UserRole.PATIENT:
             return obj.patient == request.user
         
-        # Approved providers can access all patient records
+        # Providers need explicit access grant
         if request.user.role == UserRole.PROVIDER:
             try:
                 provider = request.user.provider_profile
                 from common.enums import ProviderStatus
-                if provider.status == ProviderStatus.APPROVED:
-                    # Providers can access records of any patient
-                    return obj.patient.role == UserRole.PATIENT
+                if provider.status != ProviderStatus.APPROVED:
+                    return False
+                
+                # Check if provider has access to this patient
+                # If they created the record, they have access
+                if obj.created_by == request.user:
+                    return True
+                
+                # Otherwise check ProviderAccess
+                return has_provider_access(provider, obj.patient)
             except Exception:
                 pass
         
@@ -70,7 +112,7 @@ class CanCreateMedicalRecord(permissions.BasePermission):
     
     Allows creation if:
     - User is a patient creating their own record, OR
-    - User is an approved provider creating a record for a patient, OR
+    - User is an approved provider creating a record for a patient they have access to, OR
     - User is an admin
     """
     
@@ -101,7 +143,7 @@ class CanModifyMedicalRecord(permissions.BasePermission):
     Permission check for modifying medical records.
     
     Patients can modify their own records but with restrictions on provider-created fields.
-    Providers can modify records they created or any patient record.
+    Providers can modify records they created or records of patients they have FULL access to.
     Admins can modify any record.
     """
     
@@ -117,18 +159,23 @@ class CanModifyMedicalRecord(permissions.BasePermission):
         # Patients can modify their own records
         if request.user.role == UserRole.PATIENT:
             if obj.patient == request.user:
-                # Additional check: patients have limited rights on provider-created records
-                # This is enforced in the serializer
                 return True
             return False
         
-        # Approved providers can modify any patient record
+        # Providers need FULL access or to have created the record
         if request.user.role == UserRole.PROVIDER:
             try:
                 provider = request.user.provider_profile
                 from common.enums import ProviderStatus
-                if provider.status == ProviderStatus.APPROVED:
-                    return obj.patient.role == UserRole.PATIENT
+                if provider.status != ProviderStatus.APPROVED:
+                    return False
+                
+                # Can always modify records they created
+                if obj.created_by == request.user:
+                    return True
+                
+                # Need FULL access to modify other records
+                return has_provider_access(provider, obj.patient, 'FULL')
             except Exception:
                 pass
         
@@ -163,5 +210,37 @@ class CanDeleteMedicalRecord(permissions.BasePermission):
                     return provider.status == ProviderStatus.APPROVED
                 except Exception:
                     pass
+        
+        return False
+
+
+class CanManageProviderAccess(permissions.BasePermission):
+    """
+    Permission check for managing provider access grants.
+    
+    Patients can grant/revoke access to their own records.
+    Admins can manage access for any patient.
+    """
+    
+    def has_permission(self, request, view):
+        """Check if user can manage provider access."""
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        if request.user.role == UserRole.ADMIN:
+            return True
+        
+        if request.user.role == UserRole.PATIENT:
+            return True
+        
+        return False
+    
+    def has_object_permission(self, request, view, obj):
+        """Check if user can manage a specific access grant."""
+        if request.user.role == UserRole.ADMIN:
+            return True
+        
+        if request.user.role == UserRole.PATIENT:
+            return obj.patient == request.user
         
         return False

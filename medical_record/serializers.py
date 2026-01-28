@@ -2,6 +2,7 @@
 Serializers for Medical Records app.
 """
 from rest_framework import serializers
+from django.utils import timezone
 from accounts.models import User
 from common.enums import UserRole
 
@@ -11,6 +12,7 @@ from medical_record.models import (
     Allergy,
     MedicalRecordAttachment,
     MedicalRecordNote,
+    ProviderAccess,
 )
 
 
@@ -394,3 +396,119 @@ class MedicalRecordUpdateSerializer(serializers.ModelSerializer):
         if x_forwarded_for:
             return x_forwarded_for.split(',')[0]
         return request.META.get('REMOTE_ADDR')
+
+
+class ProviderAccessSerializer(serializers.ModelSerializer):
+    """Serializer for viewing provider access grants."""
+    
+    patient_email = serializers.EmailField(source='patient.email', read_only=True)
+    patient_name = serializers.SerializerMethodField()
+    provider_email = serializers.EmailField(source='provider.user.email', read_only=True)
+    provider_name = serializers.SerializerMethodField()
+    access_type_display = serializers.CharField(source='get_access_type_display', read_only=True)
+    is_expired = serializers.BooleanField(read_only=True)
+    is_valid = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ProviderAccess
+        fields = [
+            'id',
+            'patient',
+            'patient_email',
+            'patient_name',
+            'provider',
+            'provider_email',
+            'provider_name',
+            'access_type',
+            'access_type_display',
+            'granted_at',
+            'expires_at',
+            'is_active',
+            'is_expired',
+            'is_valid',
+            'reason',
+        ]
+        read_only_fields = [
+            'id',
+            'granted_at',
+            'patient_email',
+            'patient_name',
+            'provider_email',
+            'provider_name',
+        ]
+    
+    def get_patient_name(self, obj):
+        if obj.patient.first_name:
+            return f"{obj.patient.first_name} {obj.patient.last_name}"
+        return obj.patient.email
+    
+    def get_provider_name(self, obj):
+        if obj.provider.user.first_name:
+            return f"{obj.provider.user.first_name} {obj.provider.user.last_name}"
+        return obj.provider.user.email
+    
+    def get_is_valid(self, obj):
+        return obj.is_valid()
+
+
+class ProviderAccessCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating provider access grants."""
+    
+    provider_id = serializers.UUIDField(write_only=True)
+    patient_id = serializers.UUIDField(write_only=True, required=False)
+    
+    class Meta:
+        model = ProviderAccess
+        fields = [
+            'provider_id',
+            'patient_id',
+            'access_type',
+            'expires_at',
+            'reason',
+        ]
+    
+    def validate(self, attrs):
+        request = self.context.get('request')
+        user = request.user
+        
+        # Get provider
+        provider_id = attrs.pop('provider_id')
+        try:
+            from providers.models import Provider
+            provider = Provider.objects.get(id=provider_id)
+            attrs['provider'] = provider
+        except Exception:
+            raise serializers.ValidationError({'provider_id': 'Provider not found.'})
+        
+        # Get patient
+        if user.role == UserRole.PATIENT:
+            # Patients can only grant access to their own records
+            attrs['patient'] = user
+        else:
+            # Admins need to specify patient
+            patient_id = attrs.pop('patient_id', None)
+            if not patient_id:
+                raise serializers.ValidationError({'patient_id': 'Patient ID is required for admins.'})
+            try:
+                patient = User.objects.get(id=patient_id, role=UserRole.PATIENT)
+                attrs['patient'] = patient
+            except User.DoesNotExist:
+                raise serializers.ValidationError({'patient_id': 'Patient not found.'})
+        
+        # Check for existing access
+        existing = ProviderAccess.objects.filter(
+            patient=attrs['patient'],
+            provider=attrs['provider']
+        ).first()
+        
+        if existing:
+            raise serializers.ValidationError(
+                'Access grant already exists for this provider and patient. '
+                'Use the update endpoint to modify it.'
+            )
+        
+        # Validate expiration
+        if attrs.get('expires_at') and attrs['expires_at'] <= timezone.now():
+            raise serializers.ValidationError({'expires_at': 'Expiration date must be in the future.'})
+        
+        return attrs
