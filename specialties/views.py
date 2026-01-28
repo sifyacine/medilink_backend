@@ -14,23 +14,34 @@ from specialties.serializers import (
     DoctorSpecialtySerializer,
     DoctorSpecialtyCreateSerializer,
 )
-from common.permissions import IsAdmin, IsVerifiedProvider
+from common.permissions import IsAdmin, IsDoctor, IsDoctorOrClinic
+from common.enums import ProviderType
 from rest_framework import serializers
 
 
 class SpecialtyViewSet(viewsets.ModelViewSet):
     """
-    CRUD operations for Specialties.
+    CRUD operations for Specialties (Global Catalog).
     
-    GET /api/specialties/ - List all active specialties
-    GET /api/specialties/{id}/ - Get specialty details
-    POST /api/specialties/ - Create specialty (admin only)
+    Specialties are a global catalog. Doctor ↔ Specialty relationships
+    are handled via DoctorSpecialty linking table.
+    
+    Permissions:
+    - Clinics: Can create specialties (global catalog)
+    - Doctors: Can create specialties (auto-attached via DoctorSpecialty)
+    - Nurses: Cannot create specialties
+    - Admins: Full access
+    - Public: Read-only access to active specialties
+    
+    GET /api/specialties/ - List all active specialties (public)
+    GET /api/specialties/{id}/ - Get specialty details (public)
+    POST /api/specialties/ - Create specialty (doctor/clinic/admin only)
     PUT /api/specialties/{id}/ - Update specialty (admin only)
     DELETE /api/specialties/{id}/ - Delete specialty (admin only)
     """
     queryset = Specialty.objects.filter(is_active=True)
     serializer_class = SpecialtySerializer
-    permission_classes = [AllowAny]  # Public read, admin write
+    permission_classes = [AllowAny]  # Public read, restricted write
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['medical_domain', 'is_active']
     search_fields = ['title', 'title_ar', 'title_fr', 'title_en', 'description', 'description_ar', 'description_fr', 'description_en']
@@ -38,8 +49,15 @@ class SpecialtyViewSet(viewsets.ModelViewSet):
     ordering = ['title']
     
     def get_permissions(self):
-        """Admin required for write operations."""
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+        """
+        Permissions based on action:
+        - create: Doctor, Clinic, or Admin
+        - update/partial_update/destroy: Admin only
+        - read: Public
+        """
+        if self.action == 'create':
+            return [IsAuthenticated(), IsDoctorOrClinic() | IsAdmin()]
+        elif self.action in ['update', 'partial_update', 'destroy']:
             return [IsAuthenticated(), IsAdmin()]
         return [AllowAny()]
     
@@ -48,24 +66,56 @@ class SpecialtyViewSet(viewsets.ModelViewSet):
         if self.request.user.is_authenticated and self.request.user.role == 'ADMIN':
             return Specialty.objects.all()
         return Specialty.objects.filter(is_active=True)
+    
+    def perform_create(self, serializer):
+        """
+        Create a specialty with role-based auto-attach behavior:
+        - Doctor creates: Create Specialty + auto-create DoctorSpecialty
+        - Clinic creates: Create Specialty only (global catalog, no attachment)
+        - Admin creates: Create Specialty only
+        """
+        specialty = serializer.save()
+        
+        # Check if creator is a doctor - auto-attach the specialty
+        user = self.request.user
+        if user.role == 'PROVIDER':
+            try:
+                provider = user.provider_profile
+                if provider.provider_type == ProviderType.DOCTOR:
+                    doctor = provider.doctor_profile
+                    # Auto-create DoctorSpecialty relationship
+                    DoctorSpecialty.objects.get_or_create(
+                        doctor=doctor,
+                        specialty=specialty,
+                        defaults={'is_primary': False}
+                    )
+            except Exception:
+                pass  # If doctor profile doesn't exist, just create the specialty
+        
+        return specialty
 
 
 class DoctorSpecialtyViewSet(viewsets.ModelViewSet):
     """
     CRUD operations for Doctor Specialties.
     
-    GET /api/doctor-specialties/ - List doctor specialties
-    POST /api/doctor-specialties/ - Assign specialty to doctor
-    DELETE /api/doctor-specialties/{id}/ - Remove specialty from doctor
+    Allows doctors to manage their specialties.
+    
+    GET /api/specialties/doctor-specialties/ - List doctor's specialties
+    POST /api/specialties/doctor-specialties/ - Assign specialty to doctor
+    PUT /api/specialties/doctor-specialties/{id}/ - Update specialty (is_primary, years_of_experience)
+    DELETE /api/specialties/doctor-specialties/{id}/ - Remove specialty from doctor
+    
+    Permissions: Only authenticated doctors can access.
     """
     serializer_class = DoctorSpecialtySerializer
-    permission_classes = [IsAuthenticated, IsVerifiedProvider]
+    permission_classes = [IsAuthenticated, IsDoctor]
     
     def get_queryset(self):
         """Return specialties for the authenticated doctor."""
         try:
             doctor = self.request.user.provider_profile.doctor_profile
-            return DoctorSpecialty.objects.filter(doctor=doctor)
+            return DoctorSpecialty.objects.filter(doctor=doctor).select_related('specialty')
         except Exception:
             return DoctorSpecialty.objects.none()
     
@@ -77,20 +127,23 @@ class DoctorSpecialtyViewSet(viewsets.ModelViewSet):
             
             # Check if already assigned
             if DoctorSpecialty.objects.filter(doctor=doctor, specialty=specialty).exists():
-                raise serializers.ValidationError('Specialty already assigned to this doctor.')
+                raise serializers.ValidationError({'specialty': 'Specialty already assigned to this doctor.'})
+            
+            # If setting as primary, unset other primaries
+            is_primary = serializer.validated_data.get('is_primary', False)
+            if is_primary:
+                DoctorSpecialty.objects.filter(doctor=doctor, is_primary=True).update(is_primary=False)
             
             serializer.save(doctor=doctor)
         except AttributeError:
-            raise serializers.ValidationError('Doctor profile not found.')
-        except Exception as e:
-            raise serializers.ValidationError(f'Error assigning specialty: {str(e)}')
+            raise serializers.ValidationError({'detail': 'Doctor profile not found.'})
     
     @action(detail=False, methods=['post'])
     def assign(self, request):
         """
-        Assign specialty to doctor.
+        Assign specialty to doctor (alternative endpoint).
         
-        POST /api/doctor-specialties/assign/
+        POST /api/specialties/doctor-specialties/assign/
         Body: {
             "specialty_id": 1,
             "is_primary": false,
@@ -106,7 +159,7 @@ class DoctorSpecialtyViewSet(viewsets.ModelViewSet):
                 # Check if already assigned
                 if DoctorSpecialty.objects.filter(doctor=doctor, specialty=specialty).exists():
                     return Response(
-                        {'error': 'Specialty already assigned to this doctor.'},
+                        {'specialty': 'Specialty already assigned to this doctor.'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 
@@ -125,9 +178,9 @@ class DoctorSpecialtyViewSet(viewsets.ModelViewSet):
                     DoctorSpecialtySerializer(doctor_specialty).data,
                     status=status.HTTP_201_CREATED
                 )
-            except Exception as e:
+            except AttributeError:
                 return Response(
-                    {'error': f'Error assigning specialty: {str(e)}'},
+                    {'detail': 'Doctor profile not found.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

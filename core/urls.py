@@ -30,6 +30,15 @@ urlpatterns = [
     # Medical records endpoints
     path('api/medical-records/', include('medical_record.urls')),
     
+    # Patient records endpoints (patients without accounts)
+    path('api/patients/', include('patients.urls')),
+    
+    # Notifications endpoints
+    path('api/', include('notifications.urls')),
+    
+    # Appointments endpoints
+    path('api/', include('appointments.urls')),
+    
     # django-allauth URLs (for email verification pages if needed)
     path('accounts/', include('allauth.urls')),
 ]

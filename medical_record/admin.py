@@ -11,6 +11,7 @@ from medical_record.models import (
     MedicalRecordAttachment,
     MedicalRecordNote,
     MedicalRecordAccessLog,
+    ProviderAccess,
 )
 
 
@@ -194,3 +195,45 @@ class MedicalRecordAccessLogAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         """Disable editing of access logs."""
         return False
+
+
+@admin.register(ProviderAccess)
+class ProviderAccessAdmin(admin.ModelAdmin):
+    """Admin interface for ProviderAccess model."""
+    list_display = [
+        'id',
+        'patient',
+        'provider_display',
+        'access_type',
+        'is_active',
+        'granted_at',
+        'expires_at',
+        'status_badge',
+    ]
+    list_filter = ['access_type', 'is_active', 'granted_at']
+    search_fields = [
+        'patient__email',
+        'provider__user__email',
+        'reason',
+    ]
+    readonly_fields = ['granted_at']
+    raw_id_fields = ['patient', 'provider', 'access_granted_by']
+    
+    def provider_display(self, obj):
+        return obj.provider.user.email
+    provider_display.short_description = 'Provider'
+    
+    def status_badge(self, obj):
+        """Show status badge."""
+        if not obj.is_active:
+            return format_html(
+                '<span style="color: red;">✗ Revoked</span>'
+            )
+        if obj.is_expired:
+            return format_html(
+                '<span style="color: orange;">⚠ Expired</span>'
+            )
+        return format_html(
+            '<span style="color: green;">✓ Active</span>'
+        )
+    status_badge.short_description = 'Status'

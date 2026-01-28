@@ -6,12 +6,41 @@ from providers.models.nurse import Nurse, NurseCertification
 from providers.serializers.status import ProviderStatusSerializer
 
 
+class NurseServiceListSerializer(serializers.Serializer):
+    """Lightweight serializer for nurse's services in profile response."""
+    id = serializers.IntegerField(source='service.id', read_only=True)
+    title = serializers.CharField(source='service.title', read_only=True)
+    slug = serializers.CharField(source='service.slug', read_only=True)
+    description = serializers.CharField(source='service.description', read_only=True)
+    price = serializers.DecimalField(
+        source='service.price',
+        max_digits=10,
+        decimal_places=2,
+        read_only=True
+    )
+    custom_price = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        read_only=True,
+        allow_null=True
+    )
+    final_price = serializers.SerializerMethodField()
+    duration_minutes = serializers.IntegerField(source='service.duration_minutes', read_only=True)
+    is_home_service = serializers.BooleanField(source='service.is_home_service', read_only=True)
+    is_available = serializers.BooleanField(read_only=True)
+
+    def get_final_price(self, obj):
+        """Return custom_price if set, otherwise service price."""
+        return obj.custom_price if obj.custom_price else obj.service.price
+
+
 class NurseSerializer(serializers.ModelSerializer):
     """Serializer for Nurse profile."""
     provider_status = ProviderStatusSerializer(source='provider', read_only=True)
     email = serializers.EmailField(source='provider.user.email', read_only=True)
     full_name = serializers.CharField(source='get_full_name', read_only=True)
     gender_display = serializers.CharField(source='get_gender_display', read_only=True)
+    services = serializers.SerializerMethodField()
     
     class Meta:
         model = Nurse
@@ -36,11 +65,21 @@ class NurseSerializer(serializers.ModelSerializer):
             'is_verified',
             'is_available',
             'is_home_service_available',
+            'services',
             'provider_status',
             'created_at',
             'updated_at',
         ]
         read_only_fields = ['id', 'email', 'is_verified', 'created_at', 'updated_at']
+    
+    def get_services(self, obj):
+        """Return the nurse's services."""
+        try:
+            from services.models import NurseService
+            nurse_services = NurseService.objects.filter(nurse=obj).select_related('service')
+            return NurseServiceListSerializer(nurse_services, many=True).data
+        except Exception:
+            return []
 
 
 class NurseStatusSerializer(serializers.ModelSerializer):

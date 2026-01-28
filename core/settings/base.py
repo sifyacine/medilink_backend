@@ -76,6 +76,9 @@ INSTALLED_APPS = [
     'specialties',
     'social_media',
     'medical_record',
+    'patients',  # Patient records without accounts
+    'notifications',  # Notification system
+    'appointments',  # Appointment scheduling
 ]
 
 SITE_ID = 1
@@ -90,7 +93,8 @@ CORS_ALLOWED_ORIGINS = env.list(
         'http://localhost:5173',  # Vite dev server
         'http://localhost:8000',  # Local Django (for tools / proxies)
         'https://dzmedilink.netlify.app',  # Deployed frontend
-        'http://dzmedilink.duckdns.org',  # Deployed backend
+        'http://dzmedilink.duckdns.org',  # Deployed backend HTTP
+        'https://dzmedilink.duckdns.org',  # Deployed backend HTTPS
     ],
 )
 

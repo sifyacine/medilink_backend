@@ -1,9 +1,17 @@
 """
 Medical Records models for patient-centered healthcare data management.
+
+Supports two patient linking strategies:
+1. patient (User) - For patients with Medilink accounts
+2. patient_record (PatientRecord) - For patients without accounts
+
+At least one must be set. If both are set, they should be consistent
+(patient_record.linked_user == patient).
 """
 from django.db import models
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.exceptions import ValidationError
 
 from accounts.models import User
 from common.enums import UserRole
@@ -13,14 +21,70 @@ class MedicalRecord(models.Model):
     """
     Main medical record model.
     Owned by a patient, accessible by authorized providers.
+    
+    Supports both:
+    - Patients with accounts (via patient FK)
+    - Patients without accounts (via patient_record FK)
+    
+    At least one of patient or patient_record must be set.
     """
+    # Link to User (for patients with accounts)
     patient = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         related_name='medical_records',
         limit_choices_to={'role': UserRole.PATIENT},
-        help_text='Patient who owns this medical record'
+        help_text='Patient who owns this medical record (if they have an account)'
     )
+    
+    # Link to PatientRecord (for patients without accounts)
+    patient_record = models.ForeignKey(
+        'patients.PatientRecord',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='medical_records',
+        help_text='Patient record (for patients without accounts)'
+    )
+    
+    def clean(self):
+        """Validate that at least one patient link is set."""
+        super().clean()
+        if not self.patient and not self.patient_record:
+            raise ValidationError(
+                'A medical record must be linked to either a patient user or a patient record.'
+            )
+        # If both are set, validate consistency
+        if self.patient and self.patient_record:
+            if self.patient_record.linked_user and self.patient_record.linked_user != self.patient:
+                raise ValidationError(
+                    'Patient record is linked to a different user than the specified patient.'
+                )
+    
+    def save(self, *args, **kwargs):
+        """Ensure validation runs on save."""
+        self.full_clean()
+        super().save(*args, **kwargs)
+    
+    @property
+    def patient_display_name(self):
+        """Get the patient's display name regardless of link type."""
+        if self.patient:
+            return self.patient.email
+        if self.patient_record:
+            return self.patient_record.full_name
+        return 'Unknown Patient'
+    
+    @property
+    def effective_patient_id(self):
+        """Get the effective patient identifier."""
+        if self.patient_record:
+            return self.patient_record.patient_unique_id
+        if self.patient:
+            return f"USER-{self.patient.id}"
+        return None
     
     # Record metadata
     title = models.CharField(
@@ -118,6 +182,7 @@ class MedicalRecord(models.Model):
         ordering = ['-record_date', '-created_at']
         indexes = [
             models.Index(fields=['patient', '-record_date']),
+            models.Index(fields=['patient_record', '-record_date']),
             models.Index(fields=['record_type']),
             models.Index(fields=['created_by']),
             models.Index(fields=['is_active', '-record_date']),
@@ -125,7 +190,7 @@ class MedicalRecord(models.Model):
         ]
     
     def __str__(self):
-        return f'{self.title} - {self.patient.email} ({self.record_date})'
+        return f'{self.title} - {self.patient_display_name} ({self.record_date})'
 
 
 class Prescription(models.Model):
@@ -373,6 +438,7 @@ class MedicalRecordAccessLog(models.Model):
             ('CREATE', 'Create'),
             ('UPDATE', 'Update'),
             ('DELETE', 'Delete'),
+            ('PDF_EXPORT', 'PDF Export'),
         ],
         help_text='Type of access'
     )
@@ -400,3 +466,84 @@ class MedicalRecordAccessLog(models.Model):
     
     def __str__(self):
         return f'{self.access_type} by {self.accessed_by.email if self.accessed_by else "Unknown"} - {self.accessed_at}'
+
+
+class ProviderAccess(models.Model):
+    """
+    Tracks which providers have access to which patient's medical records.
+    This enforces authorization - providers can only access records they're authorized for.
+    """
+    ACCESS_TYPES = [
+        ('FULL', 'Full Access'),
+        ('READ_ONLY', 'Read Only'),
+        ('LIMITED', 'Limited Access'),
+    ]
+    
+    patient = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='authorized_providers',
+        limit_choices_to={'role': UserRole.PATIENT},
+        help_text='Patient whose records are being accessed'
+    )
+    provider = models.ForeignKey(
+        'providers.Provider',
+        on_delete=models.CASCADE,
+        related_name='authorized_patients',
+        help_text='Provider who has access'
+    )
+    access_granted_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='granted_accesses',
+        help_text='User who granted this access (patient or admin)'
+    )
+    access_type = models.CharField(
+        max_length=50,
+        choices=ACCESS_TYPES,
+        default='READ_ONLY',
+        help_text='Type of access granted'
+    )
+    granted_at = models.DateTimeField(
+        default=timezone.now,
+        help_text='When access was granted'
+    )
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When access expires (null = permanent)'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text='Whether access is currently active'
+    )
+    reason = models.TextField(
+        blank=True,
+        help_text='Reason for granting access'
+    )
+    
+    class Meta:
+        db_table = 'provider_access'
+        verbose_name = 'Provider Access'
+        verbose_name_plural = 'Provider Accesses'
+        unique_together = [['patient', 'provider']]
+        indexes = [
+            models.Index(fields=['patient', 'is_active']),
+            models.Index(fields=['provider', 'is_active']),
+        ]
+    
+    def __str__(self):
+        return f'{self.provider.user.email} -> {self.patient.email} ({self.access_type})'
+    
+    @property
+    def is_expired(self):
+        """Check if access has expired."""
+        if self.expires_at:
+            return timezone.now() > self.expires_at
+        return False
+    
+    def is_valid(self):
+        """Check if access is valid (active and not expired)."""
+        return self.is_active and not self.is_expired
