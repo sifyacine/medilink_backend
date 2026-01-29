@@ -66,6 +66,7 @@ class DoctorSerializer(serializers.ModelSerializer):
             'gender_display',
             'date_of_birth',
             'profile_image',
+            'phone_number',
             'license_number',
             'years_of_experience',
             'biography',

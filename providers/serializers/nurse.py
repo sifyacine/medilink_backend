@@ -54,6 +54,7 @@ class NurseSerializer(serializers.ModelSerializer):
             'gender_display',
             'date_of_birth',
             'profile_image',
+            'phone_number',
             'license_number',
             'certification',
             'years_of_experience',

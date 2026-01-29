@@ -307,6 +307,7 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
 
     first_name = serializers.CharField(required=False, allow_blank=True)
     last_name = serializers.CharField(required=False, allow_blank=True)
+    gender = serializers.CharField(required=False, allow_blank=True)
     biography = serializers.CharField(required=False, allow_blank=True)
     years_of_experience = serializers.IntegerField(required=False, min_value=0, max_value=100)
     is_available = serializers.BooleanField(required=False)
@@ -340,6 +341,7 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             # Provider profile editable fields exposed via /api/auth/me/
             'first_name',
             'last_name',
+            'gender',
             'biography',
             'years_of_experience',
             'is_available',
@@ -364,6 +366,7 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         for field in [
             'first_name',
             'last_name',
+            'gender',
             'biography',
             'years_of_experience',
             'is_available',
@@ -481,17 +484,13 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         if subtype in ('doctor', 'nurse'):
             set_field('first_name')
             set_field('last_name')
+            set_field('gender')
             set_field('biography')
             set_field('years_of_experience')
             set_field('is_available')
             set_field('is_home_service_available')
             set_field('profile_image')
-
-            # phone_number is not supported on doctor/nurse models
-            if 'phone_number' in provider_fields:
-                field_errors['phone_number'] = [
-                    'Phone number cannot be changed from here for this provider type. Please contact support.',
-                ]
+            set_field('phone_number')
 
         # Organization-style providers (clinic, lab, seller, vtc)
         if subtype in ('clinic', 'laboratory', 'seller', 'vtc'):

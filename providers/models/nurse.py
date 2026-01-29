@@ -63,6 +63,11 @@ class Nurse(models.Model):
         blank=True,
         help_text='Nursing certification type'
     )
+    phone_number = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text='Primary phone number for this nurse'
+    )
     years_of_experience = models.PositiveIntegerField(
         null=True,
         blank=True,

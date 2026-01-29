@@ -56,6 +56,11 @@ class Doctor(models.Model):
         blank=True,
         help_text='Profile image'
     )
+    phone_number = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text='Primary phone number for this doctor'
+    )
     
     # Professional Information
     license_number = models.CharField(
