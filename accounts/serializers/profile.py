@@ -18,7 +18,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
     id = serializers.IntegerField(read_only=True)
     email = serializers.EmailField(read_only=True)
     role = serializers.CharField(read_only=True)
+    role_display = serializers.CharField(source='get_role_display', read_only=True)
     account_status = serializers.CharField(read_only=True)
+    account_status_display = serializers.CharField(source='get_account_status_display', read_only=True)
     is_active = serializers.BooleanField(read_only=True)
     is_staff = serializers.BooleanField(read_only=True)
     
@@ -42,6 +44,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
     provider_profile = serializers.SerializerMethodField()
     patient_profile = serializers.SerializerMethodField()
     addresses = serializers.SerializerMethodField()
+    provider_type = serializers.SerializerMethodField()
+    provider_type_display = serializers.SerializerMethodField()
+    # Backwards-compatible subtype alias so frontends can
+    # read a generic `subtype` field (e.g. DOCTOR, CLINIC).
+    subtype = serializers.SerializerMethodField()
+    subtype_display = serializers.SerializerMethodField()
     
     class Meta:
         model = User
@@ -49,7 +57,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'id',
             'email',
             'role',
+            'role_display',
             'account_status',
+            'account_status_display',
             'is_active',
             'is_staff',
             'email_verified',
@@ -63,6 +73,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'provider_profile',
             'patient_profile',
             'addresses',
+            'provider_type',
+            'provider_type_display',
+            'subtype',
+            'subtype_display',
         ]
     
     def get_provider_profile(self, obj):
@@ -80,7 +94,16 @@ class UserProfileSerializer(serializers.ModelSerializer):
             # Add provider subtype data based on provider_type
             from common.enums import ProviderType
             provider_type = provider.provider_type
+            profile_data['provider_type'] = provider_type
             
+            try:
+                label = ProviderType(provider_type).label if provider_type in ProviderType.values else provider.get_provider_type_display()
+            except Exception:
+                label = provider.get_provider_type_display()
+
+            if label:
+                profile_data['provider_type_display'] = label
+
             try:
                 if provider_type == ProviderType.DOCTOR:
                     from providers.serializers.doctor import DoctorSerializer
@@ -197,6 +220,55 @@ class UserProfileSerializer(serializers.ModelSerializer):
         addresses_qs = addresses_qs.order_by("-is_primary", "-updated_at")
 
         return AddressSerializer(addresses_qs, many=True).data
+
+    def get_provider_type(self, obj):
+        """Return provider type value for provider users."""
+        if obj.role != UserRole.PROVIDER:
+            return None
+
+        try:
+            provider = obj.provider_profile
+            return getattr(provider, 'provider_type', None)
+        except Exception:
+            return None
+
+    def get_provider_type_display(self, obj):
+        """Return a human-readable provider type label."""
+        if obj.role != UserRole.PROVIDER:
+            return None
+
+        try:
+            provider = obj.provider_profile
+        except Exception:
+            return None
+
+        try:
+            from common.enums import ProviderType
+
+            provider_type = getattr(provider, 'provider_type', None)
+            if provider_type and provider_type in ProviderType.values:
+                return ProviderType(provider_type).label
+        except Exception:
+            pass
+
+        return provider.get_provider_type_display()
+
+    # ------------------------------------------------------------------
+    # Backwards-compatible subtype helpers
+    # ------------------------------------------------------------------
+
+    def get_subtype(self, obj):
+        """Expose provider subtype as a generic `subtype` field.
+
+        This mirrors `provider_type` for provider users so that
+        clients expecting a `subtype` key (e.g. DOCTOR, CLINIC)
+        continue to work.
+        """
+        return self.get_provider_type(obj)
+
+    def get_subtype_display(self, obj):
+        """Human readable label for the subtype (e.g. Doctor)."""
+        return self.get_provider_type_display(obj)
 
 
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
