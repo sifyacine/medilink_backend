@@ -337,6 +337,19 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             'last_login_ip',
             'created_at',
             'updated_at',
+            # Provider profile editable fields exposed via /api/auth/me/
+            'first_name',
+            'last_name',
+            'biography',
+            'years_of_experience',
+            'is_available',
+            'is_home_service_available',
+            'phone_number',
+            'profile_image',
+            # Sensitive provider fields are declared as write-only and
+            # explicitly blocked in `update()` with a clear message.
+            'license_number',
+            'degree_document',
         ]
     
     def update(self, instance, validated_data):
