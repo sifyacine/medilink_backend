@@ -72,18 +72,20 @@ def get_my_profile(request):
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    # Because almost all fields on UserProfileUpdateSerializer are
-    # read-only, DRF will silently drop them from validated_data.
-    # When the client sends only read-only fields, we explicitly
-    # return a 400 instead of pretending the update succeeded.
+    # When the client sends only read-only fields, DRF silently drops
+    # them from validated_data. If that happens, we explicitly return
+    # a 400 instead of pretending the update succeeded. At the moment
+    # this endpoint allows updating profile completion flags and a
+    # limited set of provider profile fields (name, bio, availability,
+    # contact details) for the authenticated user.
     if not serializer.validated_data:
         return Response(
             {
                 "detail": (
                     "No updatable fields were provided. The /api/auth/me/ "
-                    "endpoint currently exposes read-only account fields; "
-                    "use role-specific endpoints (e.g. /api/provider/) to "
-                    "update profile details."
+                    "endpoint only accepts a limited set of profile fields "
+                    "(for example name, availability, and profile completion "
+                    "flags). Other account changes must be handled by support."
                 )
             },
             status=status.HTTP_400_BAD_REQUEST,

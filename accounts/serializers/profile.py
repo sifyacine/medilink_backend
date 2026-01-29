@@ -288,12 +288,37 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
     is_superuser = serializers.BooleanField(read_only=True)
     email_verified = serializers.BooleanField(read_only=True)
     email_verified_at = serializers.DateTimeField(read_only=True)
-    profile_completed = serializers.BooleanField(read_only=True)
-    profile_completion_percentage = serializers.IntegerField(read_only=True)
+    # Allow users to update their own profile completion flags.
+    # These are safe, per-user indicators and do not grant privileges.
+    profile_completed = serializers.BooleanField(required=False)
+    profile_completion_percentage = serializers.IntegerField(required=False, min_value=0, max_value=100)
     last_login = serializers.DateTimeField(read_only=True)
     last_login_ip = serializers.IPAddressField(read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
     updated_at = serializers.DateTimeField(read_only=True)
+
+    # ------------------------------------------------------------------
+    # Provider profile editable fields (for current user only)
+    # ------------------------------------------------------------------
+    # These do not live on the User model, but on the
+    # provider subtype models (Doctor, Nurse, Clinic, etc.).
+    # They are declared here so /api/auth/me/ can accept them
+    # and route updates to the appropriate profile instance.
+
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
+    biography = serializers.CharField(required=False, allow_blank=True)
+    years_of_experience = serializers.IntegerField(required=False, min_value=0, max_value=100)
+    is_available = serializers.BooleanField(required=False)
+    is_home_service_available = serializers.BooleanField(required=False)
+    phone_number = serializers.CharField(required=False, allow_blank=True)
+    profile_image = serializers.ImageField(required=False, allow_null=True)
+
+    # Sensitive provider fields that must NOT be changed directly
+    # by the user. If these are sent, we return a clear error
+    # asking the user to contact support.
+    license_number = serializers.CharField(required=False, allow_blank=True, write_only=True)
+    degree_document = serializers.FileField(required=False, allow_null=True, write_only=True)
     
     class Meta:
         model = User
@@ -320,13 +345,161 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         Note: Most fields are read-only, so this mainly handles edge cases.
         Role-specific profile updates should be handled in separate endpoints.
         """
-        # Update timestamp tracking
+        # Pull out provider-related fields so they are not applied
+        # to the User instance directly.
+        provider_fields = {}
+        for field in [
+            'first_name',
+            'last_name',
+            'biography',
+            'years_of_experience',
+            'is_available',
+            'is_home_service_available',
+            'phone_number',
+            'profile_image',
+            'license_number',
+            'degree_document',
+        ]:
+            if field in validated_data:
+                provider_fields[field] = validated_data.pop(field)
+
+        # Block direct changes to sensitive provider fields
+        sensitive_errors = {}
+        if provider_fields.get('license_number') not in (None, ''):
+            sensitive_errors['license_number'] = [
+                'This field cannot be changed from the app. Please contact support.',
+            ]
+        if provider_fields.get('degree_document') is not None:
+            sensitive_errors['degree_document'] = [
+                'This field cannot be changed from the app. Please contact support.',
+            ]
+        if sensitive_errors:
+            raise serializers.ValidationError(sensitive_errors)
+
+        # Update timestamp tracking on the User instance
         if 'request' in self.context:
             instance.updated_by = self.context['request'].user
         
-        # Save any validated data (though most fields are read-only)
+        # Apply remaining (safe) fields to the User instance
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
-        
         instance.save()
+
+        # If no provider-related fields were supplied, we're done
+        if not provider_fields:
+            return instance
+
+        # Provider-related updates are only valid for provider accounts
+        if not instance.is_provider:
+            errors = {
+                key: ['This field is only available for provider accounts.']
+                for key in provider_fields.keys()
+            }
+            raise serializers.ValidationError(errors)
+
+        # Resolve the concrete provider subtype profile
+        try:
+            provider = instance.provider_profile
+        except Exception:
+            raise serializers.ValidationError(
+                {
+                    'detail': 'Provider profile is not configured for this account. Please contact support.',
+                }
+            )
+
+        try:
+            from common.enums import ProviderType
+        except Exception:
+            ProviderType = None
+
+        provider_type = getattr(provider, 'provider_type', None)
+        profile_obj = None
+
+        try:
+            if ProviderType and provider_type == ProviderType.DOCTOR:
+                profile_obj = provider.doctor_profile
+                subtype = 'doctor'
+            elif ProviderType and provider_type == ProviderType.NURSE:
+                profile_obj = provider.nurse_profile
+                subtype = 'nurse'
+            elif ProviderType and provider_type == ProviderType.CLINIC:
+                profile_obj = provider.clinic_profile
+                subtype = 'clinic'
+            elif ProviderType and provider_type == ProviderType.LABORATORY:
+                profile_obj = provider.laboratory_profile
+                subtype = 'laboratory'
+            elif ProviderType and provider_type == ProviderType.SELLER:
+                profile_obj = provider.seller_profile
+                subtype = 'seller'
+            elif ProviderType and provider_type == ProviderType.VTC:
+                profile_obj = provider.vtc_profile
+                subtype = 'vtc'
+            else:
+                profile_obj = None
+                subtype = None
+        except Exception:
+            profile_obj = None
+            subtype = None
+
+        if profile_obj is None:
+            raise serializers.ValidationError(
+                {
+                    'detail': 'Profile for this provider type is not available. Please contact support.',
+                }
+            )
+
+        field_errors = {}
+
+        # Helper to assign a field if it exists on the profile
+        def set_field(field_name, model_attr=None):
+            nonlocal field_errors
+            if field_name not in provider_fields:
+                return
+            value = provider_fields[field_name]
+            target_attr = model_attr or field_name
+            if not hasattr(profile_obj, target_attr):
+                field_errors[field_name] = [
+                    'This field is not editable for your provider type.',
+                ]
+                return
+            setattr(profile_obj, target_attr, value)
+
+        # Doctor / Nurse personal fields
+        if subtype in ('doctor', 'nurse'):
+            set_field('first_name')
+            set_field('last_name')
+            set_field('biography')
+            set_field('years_of_experience')
+            set_field('is_available')
+            set_field('is_home_service_available')
+            set_field('profile_image')
+
+            # phone_number is not supported on doctor/nurse models
+            if 'phone_number' in provider_fields:
+                field_errors['phone_number'] = [
+                    'Phone number cannot be changed from here for this provider type. Please contact support.',
+                ]
+
+        # Organization-style providers (clinic, lab, seller, vtc)
+        if subtype in ('clinic', 'laboratory', 'seller', 'vtc'):
+            set_field('phone_number')
+            set_field('is_available')
+            # For clinics we treat `profile_image` as logo if provided
+            if subtype == 'clinic':
+                set_field('profile_image', model_attr='logo')
+
+        if field_errors:
+            # Do not persist partial changes if there are field-level errors
+            raise serializers.ValidationError(field_errors)
+
+        # Persist provider profile changes
+        try:
+            profile_obj.save()
+        except Exception:
+            raise serializers.ValidationError(
+                {
+                    'detail': 'Could not update provider profile at this time. Please try again or contact support.',
+                }
+            )
+
         return instance
