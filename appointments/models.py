@@ -179,6 +179,7 @@ class AppointmentStatus(models.TextChoices):
     """Appointment status choices."""
     PENDING = 'PENDING', 'Pending'
     CONFIRMED = 'CONFIRMED', 'Confirmed'
+    REJECTED = 'REJECTED', 'Rejected'
     CANCELLED = 'CANCELLED', 'Cancelled'
     COMPLETED = 'COMPLETED', 'Completed'
     NO_SHOW = 'NO_SHOW', 'No Show'
@@ -254,14 +255,23 @@ class Appointment(models.Model):
         help_text='Patient record (for patients without accounts)'
     )
     
-    # Service being provided (optional)
+    # Primary service being provided (optional)
     service = models.ForeignKey(
         'services.Service',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='appointments',
-        help_text='Service being provided'
+        help_text='Primary service being provided'
+    )
+    
+    # Multiple services for a single appointment
+    services = models.ManyToManyField(
+        'services.Service',
+        blank=True,
+        related_name='appointment_list',
+        through='AppointmentService',
+        help_text='All services provided in this appointment'
     )
     
     # Scheduling
@@ -333,6 +343,17 @@ class Appointment(models.Model):
     provider_notes = models.TextField(
         blank=True,
         help_text='Private notes for the provider'
+    )
+    
+    # Rejection info (for when provider rejects a patient's request)
+    rejection_reason = models.TextField(
+        blank=True,
+        help_text='Reason for rejecting the appointment request'
+    )
+    rejected_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='When the appointment was rejected'
     )
     
     # Cancellation info
@@ -501,6 +522,18 @@ class Appointment(models.Model):
         if save:
             self.save(update_fields=['status', 'confirmed_at', 'updated_at'])
     
+    def reject(self, reason='', save=True):
+        """Reject the appointment (provider rejects patient's request)."""
+        if self.status != AppointmentStatus.PENDING:
+            raise ValidationError(f'Cannot reject appointment with status {self.status}')
+        
+        self.status = AppointmentStatus.REJECTED
+        self.rejection_reason = reason
+        self.rejected_at = timezone.now()
+        
+        if save:
+            self.save(update_fields=['status', 'rejection_reason', 'rejected_at', 'updated_at'])
+    
     def cancel(self, cancelled_by, reason=CancellationReason.OTHER, notes='', save=True):
         """Cancel the appointment."""
         if self.status in [AppointmentStatus.COMPLETED, AppointmentStatus.CANCELLED]:
@@ -585,3 +618,42 @@ class AppointmentReminder(models.Model):
     
     def __str__(self):
         return f'Reminder for {self.appointment} at {self.remind_at}'
+
+
+class AppointmentService(models.Model):
+    """
+    Through model for Appointment-Service relationship.
+    
+    Allows attaching multiple services to an appointment with
+    optional notes per service.
+    """
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+    appointment = models.ForeignKey(
+        Appointment,
+        on_delete=models.CASCADE,
+        related_name='appointment_services'
+    )
+    service = models.ForeignKey(
+        'services.Service',
+        on_delete=models.CASCADE,
+        related_name='appointment_services'
+    )
+    notes = models.TextField(
+        blank=True,
+        help_text='Notes specific to this service in this appointment'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'appointment_services'
+        verbose_name = 'Appointment Service'
+        verbose_name_plural = 'Appointment Services'
+        unique_together = [['appointment', 'service']]
+    
+    def __str__(self):
+        return f'{self.appointment} - {self.service}'
+

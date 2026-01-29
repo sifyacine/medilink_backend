@@ -79,6 +79,7 @@ INSTALLED_APPS = [
     'patients',  # Patient records without accounts
     'notifications',  # Notification system
     'appointments',  # Appointment scheduling
+    'prescriptions',  # Prescription management
 ]
 
 SITE_ID = 1

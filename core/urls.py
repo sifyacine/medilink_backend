@@ -39,6 +39,9 @@ urlpatterns = [
     # Appointments endpoints
     path('api/', include('appointments.urls')),
     
+    # Prescriptions endpoints
+    path('api/', include('prescriptions.urls')),
+    
     # django-allauth URLs (for email verification pages if needed)
     path('accounts/', include('allauth.urls')),
 ]

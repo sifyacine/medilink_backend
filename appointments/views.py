@@ -217,6 +217,189 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             )
     
     @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """
+        Reject an appointment (provider rejects patient's request).
+        
+        Only providers can reject appointments.
+        Requires rejection_reason.
+        """
+        appointment = self.get_object()
+        
+        # Check if user is the provider
+        if not hasattr(request.user, 'provider_profile'):
+            return Response(
+                {'error': 'Only providers can reject appointments.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if request.user.provider_profile != appointment.provider:
+            return Response(
+                {'error': 'You can only reject your own appointments.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        reason = request.data.get('rejection_reason', '')
+        if not reason:
+            return Response(
+                {'error': 'Rejection reason is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            appointment.reject(reason=reason)
+            
+            return Response({
+                'status': 'rejected',
+                'message': 'Appointment rejected successfully',
+                'data': AppointmentDetailSerializer(appointment).data
+            })
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['post', 'get'], url_path='services')
+    def manage_services(self, request, pk=None):
+        """
+        Attach or view services for an appointment.
+        
+        GET - List current services
+        POST - Attach services (body: {"service_ids": [uuid, ...]})
+        
+        Only providers can attach services.
+        """
+        appointment = self.get_object()
+        
+        if request.method == 'GET':
+            from appointments.models import AppointmentService
+            from services.serializers import ServiceSerializer
+            
+            appointment_services = appointment.appointment_services.select_related('service')
+            services_data = []
+            for aps in appointment_services:
+                services_data.append({
+                    'id': str(aps.id),
+                    'service': ServiceSerializer(aps.service).data if hasattr(aps, 'service') else None,
+                    'notes': aps.notes,
+                    'created_at': aps.created_at.isoformat()
+                })
+            
+            return Response({
+                'appointment_id': str(appointment.id),
+                'services': services_data
+            })
+        
+        # POST - Attach services
+        if not hasattr(request.user, 'provider_profile'):
+            return Response(
+                {'error': 'Only providers can attach services.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if request.user.provider_profile != appointment.provider:
+            return Response(
+                {'error': 'You can only modify your own appointments.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        service_ids = request.data.get('service_ids', [])
+        if not service_ids:
+            return Response(
+                {'error': 'service_ids is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        from services.models import Service
+        from appointments.models import AppointmentService
+        
+        # Validate services exist
+        services = Service.objects.filter(id__in=service_ids)
+        if services.count() != len(service_ids):
+            return Response(
+                {'error': 'One or more services not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Add services (avoid duplicates)
+        added = []
+        for service in services:
+            aps, created = AppointmentService.objects.get_or_create(
+                appointment=appointment,
+                service=service
+            )
+            if created:
+                added.append(str(service.id))
+        
+        return Response({
+            'message': f'{len(added)} services attached successfully',
+            'added_service_ids': added,
+            'data': AppointmentDetailSerializer(appointment).data
+        })
+    
+    @action(detail=True, methods=['delete'], url_path='services/(?P<service_id>[^/.]+)')
+    def remove_service(self, request, pk=None, service_id=None):
+        """
+        Remove a service from an appointment.
+        
+        DELETE /api/appointments/{id}/services/{service_id}/
+        """
+        appointment = self.get_object()
+        
+        if not hasattr(request.user, 'provider_profile'):
+            return Response(
+                {'error': 'Only providers can remove services.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if request.user.provider_profile != appointment.provider:
+            return Response(
+                {'error': 'You can only modify your own appointments.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        from appointments.models import AppointmentService
+        
+        try:
+            aps = AppointmentService.objects.get(
+                appointment=appointment,
+                service_id=service_id
+            )
+            aps.delete()
+            return Response({
+                'message': 'Service removed successfully'
+            })
+        except AppointmentService.DoesNotExist:
+            return Response(
+                {'error': 'Service not attached to this appointment.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @action(detail=True, methods=['get'])
+    def prescription(self, request, pk=None):
+        """
+        Get the prescription for an appointment (if exists).
+        
+        GET /api/appointments/{id}/prescription/
+        """
+        appointment = self.get_object()
+        
+        if not hasattr(appointment, 'prescription') or not appointment.prescription:
+            return Response(
+                {'error': 'No prescription for this appointment.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        from prescriptions.serializers import PrescriptionDetailSerializer
+        return Response(
+            PrescriptionDetailSerializer(
+                appointment.prescription,
+                context={'request': request}
+            ).data
+        )
+    
+    @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         """
         Cancel an appointment.
