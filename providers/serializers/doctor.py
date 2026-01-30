@@ -133,3 +133,72 @@ class DoctorCertificationSerializer(serializers.ModelSerializer):
             'created_at',
         ]
         read_only_fields = ['id', 'is_verified', 'created_at']
+
+
+class DoctorPublicSerializer(serializers.ModelSerializer):
+    """
+    Public serializer for Doctor profiles.
+    Used for public browsing - excludes sensitive information.
+    """
+    full_name = serializers.SerializerMethodField()
+    gender_display = serializers.CharField(source='get_gender_display', read_only=True)
+    specialties = serializers.SerializerMethodField()
+    services = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Doctor
+        fields = [
+            'id',
+            'first_name',
+            'last_name',
+            'full_name',
+            'gender',
+            'gender_display',
+            'profile_image',
+            'years_of_experience',
+            'biography',
+            'is_available',
+            'is_home_service_available',
+            'specialties',
+            'services',
+            'created_at',
+        ]
+        # Exclude: license_number, degree_document, phone_number, date_of_birth
+    
+    def get_full_name(self, obj):
+        return f"Dr. {obj.first_name} {obj.last_name}"
+    
+    def get_specialties(self, obj):
+        """Return the doctor's specialties."""
+        try:
+            from specialties.models import DoctorSpecialty
+            doctor_specialties = DoctorSpecialty.objects.filter(doctor=obj).select_related('specialty')
+            return [{
+                'id': ds.specialty.id,
+                'title': ds.specialty.title,
+                'title_ar': ds.specialty.title_ar,
+                'title_fr': ds.specialty.title_fr,
+                'slug': ds.specialty.slug,
+                'is_primary': ds.is_primary,
+            } for ds in doctor_specialties]
+        except Exception:
+            return []
+    
+    def get_services(self, obj):
+        """Return the doctor's available services."""
+        try:
+            from services.models import DoctorService
+            doctor_services = DoctorService.objects.filter(
+                doctor=obj,
+                is_available=True
+            ).select_related('service')
+            return [{
+                'id': ds.service.id,
+                'title': ds.service.title,
+                'description': ds.service.description,
+                'price': str(ds.custom_price or ds.service.price),
+                'duration_minutes': ds.service.duration_minutes,
+                'is_home_service': ds.service.is_home_service,
+            } for ds in doctor_services]
+        except Exception:
+            return []

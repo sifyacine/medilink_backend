@@ -1,19 +1,44 @@
 """
 Prescription permissions for the Medilink platform.
+
+Relationship chain:
+- User -> provider_profile (Provider) -> doctor_profile (Doctor)
+- User is NOT directly linked to Doctor
 """
 from rest_framework.permissions import BasePermission, SAFE_METHODS
+from common.enums import ProviderStatus
+
+
+def get_doctor_from_user(user):
+    """
+    Helper function to get Doctor instance from a User.
+    Returns None if user is not a doctor.
+    
+    Relationship: User -> provider_profile (Provider) -> doctor_profile (Doctor)
+    """
+    if not user or not user.is_authenticated:
+        return None
+    
+    try:
+        provider = getattr(user, 'provider_profile', None)
+        if provider and provider.status == ProviderStatus.APPROVED:
+            return getattr(provider, 'doctor_profile', None)
+    except Exception:
+        pass
+    
+    return None
 
 
 class IsDoctorUser(BasePermission):
     """
-    Only allow doctors to access.
+    Only allow approved doctors to access.
+    Checks User -> provider_profile -> doctor_profile chain.
     """
     message = "Only doctors can perform this action."
     
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
-        return hasattr(request.user, 'doctor_profile')
+        doctor = get_doctor_from_user(request.user)
+        return doctor is not None
 
 
 class IsPrescriptionDoctor(BasePermission):
@@ -26,11 +51,9 @@ class IsPrescriptionDoctor(BasePermission):
         if request.method in SAFE_METHODS:
             return True
         
-        if not request.user or not request.user.is_authenticated:
-            return False
-        
-        if hasattr(request.user, 'doctor_profile'):
-            return obj.doctor == request.user.doctor_profile
+        doctor = get_doctor_from_user(request.user)
+        if doctor:
+            return obj.doctor == doctor
         
         return False
 
@@ -55,7 +78,8 @@ class CanViewPrescription(BasePermission):
             return True
         
         # Doctor who created it
-        if hasattr(user, 'doctor_profile') and obj.doctor == user.doctor_profile:
+        doctor = get_doctor_from_user(user)
+        if doctor and obj.doctor == doctor:
             return True
         
         # Patient with account
@@ -87,8 +111,8 @@ class CanModifyPrescription(BasePermission):
             return True
         
         # Doctor who created it, only in draft status
-        if hasattr(user, 'doctor_profile'):
-            if obj.doctor == user.doctor_profile:
-                return obj.status == PrescriptionStatus.DRAFT
+        doctor = get_doctor_from_user(user)
+        if doctor and obj.doctor == doctor:
+            return obj.status == PrescriptionStatus.DRAFT
         
         return False

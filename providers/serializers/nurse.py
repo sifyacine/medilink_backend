@@ -115,3 +115,55 @@ class NurseCertificationSerializer(serializers.ModelSerializer):
             'created_at',
         ]
         read_only_fields = ['id', 'is_verified', 'created_at']
+
+
+class NursePublicSerializer(serializers.ModelSerializer):
+    """
+    Public serializer for Nurse profiles.
+    Used for public browsing - excludes sensitive information.
+    """
+    full_name = serializers.SerializerMethodField()
+    gender_display = serializers.CharField(source='get_gender_display', read_only=True)
+    services = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Nurse
+        fields = [
+            'id',
+            'first_name',
+            'last_name',
+            'full_name',
+            'gender',
+            'gender_display',
+            'profile_image',
+            'certification',
+            'years_of_experience',
+            'biography',
+            'is_available',
+            'is_home_service_available',
+            'services',
+            'created_at',
+        ]
+        # Exclude: license_number, degree_document, phone_number, date_of_birth, entrepreneur cards
+    
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}"
+    
+    def get_services(self, obj):
+        """Return the nurse's available services."""
+        try:
+            from services.models import NurseService
+            nurse_services = NurseService.objects.filter(
+                nurse=obj,
+                is_available=True
+            ).select_related('service')
+            return [{
+                'id': ns.service.id,
+                'title': ns.service.title,
+                'description': ns.service.description,
+                'price': str(ns.custom_price or ns.service.price),
+                'duration_minutes': ns.service.duration_minutes,
+                'is_home_service': ns.service.is_home_service,
+            } for ns in nurse_services]
+        except Exception:
+            return []

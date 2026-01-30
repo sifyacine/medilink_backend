@@ -65,3 +65,28 @@ class LaboratoryCreateSerializer(serializers.ModelSerializer):
             'license_document',
             'accreditation_document',
         ]
+
+
+class LaboratoryPublicSerializer(serializers.ModelSerializer):
+    """Public serializer for Laboratory profiles - excludes sensitive business info."""
+    services = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Laboratory
+        fields = [
+            'id',
+            'lab_name',
+            'accreditation',
+            'website',
+            'description',
+            'is_available',
+            'services',
+            'created_at',
+        ]
+    
+    def get_services(self, obj):
+        """Get services/tests offered by the laboratory's provider."""
+        from services.serializers import ServiceSerializer
+        if hasattr(obj, 'provider') and obj.provider:
+            return ServiceSerializer(obj.provider.services.all(), many=True).data
+        return []

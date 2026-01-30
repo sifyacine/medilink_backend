@@ -294,17 +294,37 @@ class PrescriptionCreateSerializer(serializers.ModelSerializer):
         
         return attrs
     
+    def _get_doctor_from_request(self, request):
+        """
+        Helper to get Doctor instance from request user.
+        Relationship: User -> provider_profile (Provider) -> doctor_profile (Doctor)
+        """
+        if not request or not request.user or not request.user.is_authenticated:
+            return None
+        
+        try:
+            from common.enums import ProviderStatus
+            provider = getattr(request.user, 'provider_profile', None)
+            if provider and provider.status == ProviderStatus.APPROVED:
+                return getattr(provider, 'doctor_profile', None)
+        except Exception:
+            pass
+        
+        return None
+    
     @transaction.atomic
     def create(self, validated_data):
         """Create prescription with items."""
         items_data = validated_data.pop('items', [])
         
-        # Get doctor from context
+        # Get doctor from context using correct relationship chain
         request = self.context.get('request')
-        if request and hasattr(request.user, 'doctor_profile'):
-            validated_data['doctor'] = request.user.doctor_profile
+        doctor = self._get_doctor_from_request(request)
+        
+        if doctor:
+            validated_data['doctor'] = doctor
         else:
-            raise serializers.ValidationError('Only doctors can create prescriptions.')
+            raise serializers.ValidationError('Only approved doctors can create prescriptions.')
         
         prescription = Prescription.objects.create(**validated_data)
         
@@ -312,6 +332,8 @@ class PrescriptionCreateSerializer(serializers.ModelSerializer):
         for idx, item_data in enumerate(items_data):
             item_data['order'] = item_data.get('order', idx)
             PrescriptionItem.objects.create(prescription=prescription, **item_data)
+        
+        return prescription
         
         return prescription
 

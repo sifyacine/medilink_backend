@@ -154,12 +154,26 @@ class UserProfileSerializer(serializers.ModelSerializer):
         if obj.role != UserRole.PATIENT:
             return None
         
-        # Patient-specific data would go here
-        # For now, return basic structure
-        return {
+        profile_data = {
             'is_patient': True,
-            # Add patient-specific fields as they are implemented
+            'has_patient_record': False,
+            'patient_record': None,
         }
+        
+        # Check if this user has a linked PatientRecord
+        try:
+            if hasattr(obj, 'patient_record') and obj.patient_record:
+                from patients.serializers import PatientRecordSerializer
+                patient_record = obj.patient_record
+                profile_data['has_patient_record'] = True
+                profile_data['patient_record'] = PatientRecordSerializer(
+                    patient_record,
+                    context=self.context,
+                ).data
+        except Exception:
+            pass
+        
+        return profile_data
 
     def get_addresses(self, obj):
         """Return all addresses attached to this user account.

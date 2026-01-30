@@ -73,3 +73,32 @@ class ClinicCreateSerializer(serializers.ModelSerializer):
             'outpatient_capacity_per_day',
             'license_document',
         ]
+
+
+class ClinicPublicSerializer(serializers.ModelSerializer):
+    """Public serializer for Clinic profiles - excludes sensitive business info."""
+    services = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Clinic
+        fields = [
+            'id',
+            'clinic_name',
+            'logo',
+            'website',
+            'description',
+            'number_of_beds',
+            'has_emergency_services',
+            'is_24_hours',
+            'outpatient_capacity_per_day',
+            'is_available',
+            'services',
+            'created_at',
+        ]
+    
+    def get_services(self, obj):
+        """Get services offered by the clinic's provider."""
+        from services.serializers import ServiceSerializer
+        if hasattr(obj, 'provider') and obj.provider:
+            return ServiceSerializer(obj.provider.services.all(), many=True).data
+        return []

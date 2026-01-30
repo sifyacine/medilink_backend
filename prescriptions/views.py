@@ -94,8 +94,17 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
             return queryset
         
         # Doctor sees their own prescriptions
-        if hasattr(user, 'doctor_profile'):
-            return queryset.filter(doctor=user.doctor_profile)
+        # Relationship: User -> provider_profile (Provider) -> doctor_profile (Doctor)
+        doctor = None
+        try:
+            provider = getattr(user, 'provider_profile', None)
+            if provider:
+                doctor = getattr(provider, 'doctor_profile', None)
+        except Exception:
+            pass
+        
+        if doctor:
+            return queryset.filter(doctor=doctor)
         
         # Patient sees their own prescriptions
         return queryset.filter(
@@ -262,14 +271,23 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
         - to_date: To date (YYYY-MM-DD)
         - ordering: Order by field (default: -created_at)
         """
-        if not hasattr(request.user, 'doctor_profile'):
+        # Get doctor using correct relationship chain
+        doctor = None
+        try:
+            provider = getattr(request.user, 'provider_profile', None)
+            if provider:
+                doctor = getattr(provider, 'doctor_profile', None)
+        except Exception:
+            pass
+        
+        if not doctor:
             return Response(
                 {'error': 'Only doctors can access this endpoint.'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
         queryset = Prescription.objects.filter(
-            doctor=request.user.doctor_profile
+            doctor=doctor
         ).select_related(
             'patient', 'patient_record', 'clinic', 'appointment'
         ).prefetch_related('items')
@@ -353,9 +371,18 @@ class PrescriptionItemViewSet(viewsets.ModelViewSet):
             return PrescriptionItem.objects.all()
         
         # Doctor sees items from their prescriptions
-        if hasattr(user, 'doctor_profile'):
+        # Use correct relationship chain: User -> provider_profile -> doctor_profile
+        doctor = None
+        try:
+            provider = getattr(user, 'provider_profile', None)
+            if provider:
+                doctor = getattr(provider, 'doctor_profile', None)
+        except Exception:
+            pass
+        
+        if doctor:
             return PrescriptionItem.objects.filter(
-                prescription__doctor=user.doctor_profile
+                prescription__doctor=doctor
             )
         
         # Patient sees their items
