@@ -42,6 +42,7 @@ class PublicProviderViewSet(viewsets.ReadOnlyModelViewSet):
     - ordering: Sort by field (e.g., -created_at, years_of_experience)
     """
     permission_classes = [AllowAny]
+    serializer_class = ProviderPublicListSerializer  # Default for list
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['provider_type']
     search_fields = [
