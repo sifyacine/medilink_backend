@@ -131,7 +131,15 @@ class NurseServiceRequest(models.Model):
     def get_patient_display_name(self):
         """Get the display name for the patient."""
         if self.patient_user:
-            return f"{self.patient_user.first_name} {self.patient_user.last_name}".strip() or self.patient_user.email
+            # User model doesn't have first_name/last_name directly
+            # Check if user has a linked patient_record with name
+            if hasattr(self.patient_user, 'patient_record') and self.patient_user.patient_record:
+                record = self.patient_user.patient_record
+                name = f"{record.first_name} {record.last_name}".strip()
+                if name:
+                    return name
+            # Fallback to email
+            return self.patient_user.email
         elif self.patient_record:
             return f"{self.patient_record.first_name} {self.patient_record.last_name}".strip()
         return "Unknown Patient"
