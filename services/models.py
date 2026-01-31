@@ -14,6 +14,14 @@ class Currency(models.TextChoices):
     EUR = 'EUR', 'Euro'
 
 
+class ServiceType(models.TextChoices):
+    """Service type choices - determines which provider type can offer this service."""
+    DOCTOR = 'DOCTOR', 'Doctor Service'
+    NURSE = 'NURSE', 'Nursing Service'
+    VTC = 'VTC', 'Health VTC Service'
+    GENERAL = 'GENERAL', 'General Service'
+
+
 class Service(models.Model):
     """
     Service model for doctors and nurses.
@@ -34,12 +42,21 @@ class Service(models.Model):
         help_text='Service description'
     )
     
+    # Service Type - determines which provider type can offer this service
+    service_type = models.CharField(
+        max_length=20,
+        choices=ServiceType.choices,
+        default=ServiceType.GENERAL,
+        db_index=True,
+        help_text='Type of service (DOCTOR, NURSE, VTC, GENERAL)'
+    )
+    
     # Pricing
     price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
         validators=[MinValueValidator(0)],
-        help_text='Service price'
+        help_text='Service price (base/minimum price for on-demand services)'
     )
     currency = models.CharField(
         max_length=3,
@@ -62,6 +79,12 @@ class Service(models.Model):
         default=False,
         db_index=True,
         help_text='Whether service can be provided at home'
+    )
+    # For on-demand nursing services
+    is_on_demand = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text='Whether this service is available for on-demand requests (Uber-like flow)'
     )
     is_active = models.BooleanField(
         default=True,
@@ -95,6 +118,8 @@ class Service(models.Model):
             models.Index(fields=['slug']),
             models.Index(fields=['is_active']),
             models.Index(fields=['is_home_service']),
+            models.Index(fields=['service_type', 'is_active']),
+            models.Index(fields=['is_on_demand', 'service_type']),
         ]
         ordering = ['title']
     

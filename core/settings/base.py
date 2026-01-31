@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'django_filters',
     'corsheaders',
+    'channels',  # WebSocket support
 
     # allauth (AFTER auth)
     'allauth',
@@ -80,6 +81,7 @@ INSTALLED_APPS = [
     'notifications',  # Notification system
     'appointments',  # Appointment scheduling
     'prescriptions',  # Prescription management
+    'nurse_requests',  # On-demand nursing services
 ]
 
 SITE_ID = 1
@@ -238,3 +240,27 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # Media files (user-uploaded: profile images, documents, etc.)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+
+# Django Channels Configuration
+ASGI_APPLICATION = 'core.asgi.application'
+
+# Channel layers configuration
+# Default: In-memory channel layer (for development)
+# For production, use Redis channel layer
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    }
+}
+
+# For production with Redis:
+# CHANNEL_LAYERS = {
+#     "default": {
+#         "BACKEND": "channels_redis.core.RedisChannelLayer",
+#         "CONFIG": {
+#             "hosts": [env("REDIS_URL", default="redis://localhost:6379")],
+#         },
+#     },
+# }
+
