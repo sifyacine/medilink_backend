@@ -76,7 +76,7 @@ class NurseOfferSerializer(serializers.ModelSerializer):
 
 class NurseServiceRequestListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for listing requests"""
-    service_name = serializers.CharField(source='service.name', read_only=True)
+    service_name = serializers.CharField(source='service.title', read_only=True)
     patient_name = serializers.SerializerMethodField()
     offers_count = serializers.SerializerMethodField()
     

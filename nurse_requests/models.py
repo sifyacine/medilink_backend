@@ -126,7 +126,7 @@ class NurseServiceRequest(models.Model):
 
     def __str__(self):
         patient_name = self.get_patient_display_name()
-        return f"Request #{self.id} - {self.service.name} by {patient_name}"
+        return f"Request #{self.id} - {self.service.title} by {patient_name}"
     
     def get_patient_display_name(self):
         """Get the display name for the patient."""

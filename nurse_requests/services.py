@@ -39,7 +39,7 @@ class NurseRequestService:
                 actor=patient_user,
                 action='REQUEST_CREATED',
                 new_status=RequestStatus.CREATED,
-                details={'service': request.service.name}
+                details={'service': request.service.title}
             )
             
             # Transition to SEARCHING
