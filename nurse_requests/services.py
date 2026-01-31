@@ -27,6 +27,11 @@ class NurseRequestService:
             patient_record: Optional PatientRecord for patients without accounts
         """
         with transaction.atomic():
+            # Set base_price from service if not provided
+            service = validated_data.get('service')
+            if service and 'base_price' not in validated_data:
+                validated_data['base_price'] = service.price
+            
             request = NurseServiceRequest.objects.create(
                 patient_user=patient_user,
                 patient_record=patient_record,

@@ -145,12 +145,13 @@ class NurseServiceRequest(models.Model):
         return None
 
     def save(self, *args, **kwargs):
-        # Ensure patient_offered_price is >= base_price
-        if self.patient_offered_price < self.base_price:
-            raise ValueError(
-                f"Patient offered price (${self.patient_offered_price}) cannot be "
-                f"lower than base price (${self.base_price})"
-            )
+        # Ensure patient_offered_price is >= base_price (only if both are set)
+        if self.patient_offered_price is not None and self.base_price is not None:
+            if self.patient_offered_price < self.base_price:
+                raise ValueError(
+                    f"Patient offered price (${self.patient_offered_price}) cannot be "
+                    f"lower than base price (${self.base_price})"
+                )
         super().save(*args, **kwargs)
 
 
