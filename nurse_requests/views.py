@@ -144,10 +144,11 @@ class NursingServiceViewSet(viewsets.ReadOnlyModelViewSet):
         serializer = self.get_serializer(instance)
         
         # Count available nurses for this service
+        # Note: is_verified is a property, not a field. Use status='APPROVED' instead.
         available_nurses_count = NurseService.objects.filter(
             service=instance,
             is_available=True,
-            nurse__provider__is_verified=True
+            nurse__provider__status='APPROVED'
         ).count()
         
         return Response({
