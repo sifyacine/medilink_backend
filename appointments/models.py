@@ -492,12 +492,9 @@ class Appointment(models.Model):
                 )
     
     def get_patient_display_name(self):
-        """Get display name for the patient."""
-        if self.patient_user:
-            return self.patient_user.get_full_name() or self.patient_user.email
-        if self.patient_record:
-            return f'{self.patient_record.first_name} {self.patient_record.last_name}'
-        return 'Unknown Patient'
+        """Get display name for the patient using centralized utility."""
+        from common.utils import get_patient_display_name
+        return get_patient_display_name(self.patient_user, self.patient_record)
     
     def get_scheduled_datetime(self):
         """Get the full datetime of the appointment."""
@@ -513,8 +510,8 @@ class Appointment(models.Model):
     
     def confirm(self, save=True):
         """Confirm the appointment."""
-        if self.status != AppointmentStatus.PENDING:
-            raise ValidationError(f'Cannot confirm appointment with status {self.status}')
+        from common.domain_helpers import AppointmentStatusTransition
+        AppointmentStatusTransition.validate_transition(self.status, AppointmentStatus.CONFIRMED)
         
         self.status = AppointmentStatus.CONFIRMED
         self.confirmed_at = timezone.now()
@@ -524,8 +521,8 @@ class Appointment(models.Model):
     
     def reject(self, reason='', save=True):
         """Reject the appointment (provider rejects patient's request)."""
-        if self.status != AppointmentStatus.PENDING:
-            raise ValidationError(f'Cannot reject appointment with status {self.status}')
+        from common.domain_helpers import AppointmentStatusTransition
+        AppointmentStatusTransition.validate_transition(self.status, AppointmentStatus.REJECTED)
         
         self.status = AppointmentStatus.REJECTED
         self.rejection_reason = reason
@@ -536,8 +533,8 @@ class Appointment(models.Model):
     
     def cancel(self, cancelled_by, reason=CancellationReason.OTHER, notes='', save=True):
         """Cancel the appointment."""
-        if self.status in [AppointmentStatus.COMPLETED, AppointmentStatus.CANCELLED]:
-            raise ValidationError(f'Cannot cancel appointment with status {self.status}')
+        from common.domain_helpers import AppointmentStatusTransition
+        AppointmentStatusTransition.validate_transition(self.status, AppointmentStatus.CANCELLED)
         
         self.status = AppointmentStatus.CANCELLED
         self.cancelled_by = cancelled_by
@@ -553,8 +550,8 @@ class Appointment(models.Model):
     
     def complete(self, save=True):
         """Mark the appointment as completed."""
-        if self.status != AppointmentStatus.CONFIRMED:
-            raise ValidationError(f'Cannot complete appointment with status {self.status}')
+        from common.domain_helpers import AppointmentStatusTransition
+        AppointmentStatusTransition.validate_transition(self.status, AppointmentStatus.COMPLETED)
         
         self.status = AppointmentStatus.COMPLETED
         self.completed_at = timezone.now()
@@ -564,19 +561,61 @@ class Appointment(models.Model):
     
     def mark_no_show(self, save=True):
         """Mark the appointment as no-show."""
-        if self.status != AppointmentStatus.CONFIRMED:
-            raise ValidationError(f'Cannot mark as no-show with status {self.status}')
+        from common.domain_helpers import AppointmentStatusTransition
+        AppointmentStatusTransition.validate_transition(self.status, AppointmentStatus.NO_SHOW)
         
         self.status = AppointmentStatus.NO_SHOW
         
         if save:
             self.save(update_fields=['status', 'updated_at'])
     
+    def get_allowed_actions(self, user=None):
+        """
+        Get list of allowed actions for this appointment.
+        
+        Args:
+            user: Optional user to check permissions for
+            
+        Returns:
+            Dictionary with action names and their availability
+        """
+        from common.domain_helpers import AppointmentStatusTransition, AppointmentPermissionHelper
+        
+        allowed_transitions = AppointmentStatusTransition.get_allowed_transitions(self.status)
+        
+        actions = {
+            'can_confirm': AppointmentStatus.CONFIRMED in allowed_transitions,
+            'can_reject': AppointmentStatus.REJECTED in allowed_transitions,
+            'can_cancel': AppointmentStatus.CANCELLED in allowed_transitions,
+            'can_complete': AppointmentStatus.COMPLETED in allowed_transitions,
+            'can_mark_no_show': AppointmentStatus.NO_SHOW in allowed_transitions,
+            'can_reschedule': AppointmentStatus.RESCHEDULED in allowed_transitions,
+            'is_terminal': AppointmentStatusTransition.is_terminal(self.status),
+        }
+        
+        # If user provided, filter based on permissions
+        if user:
+            if actions['can_confirm']:
+                can_confirm, _ = AppointmentPermissionHelper.can_confirm(user, self)
+                actions['can_confirm'] = can_confirm
+            if actions['can_cancel']:
+                can_cancel, _ = AppointmentPermissionHelper.can_cancel(user, self)
+                actions['can_cancel'] = can_cancel
+            if actions['can_complete']:
+                can_complete, _ = AppointmentPermissionHelper.can_complete(user, self)
+                actions['can_complete'] = can_complete
+            if actions['can_reschedule']:
+                can_reschedule, _ = AppointmentPermissionHelper.can_reschedule(user, self)
+                actions['can_reschedule'] = can_reschedule
+        
+        return actions
+    
     @property
     def is_upcoming(self):
         """Check if the appointment is upcoming."""
+        from common.domain_helpers import AppointmentStatusTransition
         return (
-            self.status in [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED] and
+            AppointmentStatusTransition.is_active(self.status) and
             self.get_scheduled_datetime() > timezone.now()
         )
     

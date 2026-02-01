@@ -177,39 +177,26 @@ class CanRescheduleAppointment(permissions.BasePermission):
     """
     Permission for rescheduling appointments.
     
+    Uses centralized AppointmentPermissionHelper for consistent permission logic.
+    
     Rules:
     - PENDING appointments: Both patient and provider can reschedule
-    - CONFIRMED appointments: Only provider or admin can reschedule
-    - COMPLETED/CANCELLED: Cannot be rescheduled
+    - CONFIRMED/RESCHEDULED appointments: Only provider or admin can reschedule
+    - COMPLETED/CANCELLED/REJECTED: Cannot be rescheduled
     """
     message = "You don't have permission to reschedule this appointment."
     
     def has_object_permission(self, request, view, obj):
-        user = request.user
+        from common.domain_helpers import AppointmentPermissionHelper
         
-        # Cannot reschedule completed or cancelled
-        if obj.status in [AppointmentStatus.COMPLETED, AppointmentStatus.CANCELLED]:
-            self.message = f"Cannot reschedule appointment with status {obj.status}"
-            return False
+        can_reschedule, reason = AppointmentPermissionHelper.can_reschedule(
+            request.user, obj
+        )
         
-        # Admin can always reschedule
-        if user.is_staff or user.is_superuser:
-            return True
+        if not can_reschedule:
+            self.message = reason
         
-        # Provider can reschedule any status
-        if hasattr(user, 'provider_profile'):
-            if user.provider_profile == obj.provider:
-                return True
-        
-        # Patient can only reschedule PENDING appointments
-        if obj.patient_user and obj.patient_user == user:
-            if obj.status == AppointmentStatus.PENDING:
-                return True
-            else:
-                self.message = "Patients can only reschedule pending appointments. Contact the provider."
-                return False
-        
-        return False
+        return can_reschedule
 
 
 class IsProviderOrAdmin(permissions.BasePermission):

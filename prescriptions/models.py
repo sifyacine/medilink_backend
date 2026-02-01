@@ -236,12 +236,9 @@ class Prescription(models.Model):
                 })
     
     def get_patient_display_name(self):
-        """Get display name for the patient."""
-        if self.patient:
-            return self.patient.get_full_name() or self.patient.email
-        if self.patient_record:
-            return f'{self.patient_record.first_name} {self.patient_record.last_name}'
-        return 'Unknown Patient'
+        """Get display name for the patient using centralized utility."""
+        from common.utils import get_patient_display_name
+        return get_patient_display_name(self.patient, self.patient_record)
     
     def issue(self, save=True):
         """Issue the prescription (change from draft to issued)."""

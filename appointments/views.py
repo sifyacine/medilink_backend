@@ -83,7 +83,12 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         - Patients see their own appointments
         - Providers see appointments where they are the provider
         - Admins see all appointments
+        
+        Uses optimized query with select_related and prefetch_related
+        to prevent N+1 queries.
         """
+        from common.utils import get_appointment_select_related, get_appointment_prefetch_related
+        
         user = self.request.user
         queryset = Appointment.objects.all()
         
@@ -102,11 +107,11 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         # Apply filters
         queryset = self._apply_filters(queryset)
         
+        # Optimize with select_related and prefetch_related using centralized helpers
         return queryset.select_related(
-            'provider', 'provider__user',
-            'patient_user', 'patient_record',
-            'service', 'created_by', 'cancelled_by',
-            'clinic_address', 'home_address'
+            *get_appointment_select_related()
+        ).prefetch_related(
+            *get_appointment_prefetch_related()
         ).order_by('-scheduled_date', '-scheduled_time')
     
     def _apply_filters(self, queryset):

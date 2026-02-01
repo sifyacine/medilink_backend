@@ -131,25 +131,10 @@ class PatientRecordSerializer(serializers.ModelSerializer):
         return '***'
     
     def get_created_by_provider_name(self, obj):
-        """Return the name of the provider who created this record."""
+        """Return the name of the provider who created this record using centralized utility."""
         if obj.created_by_provider:
-            try:
-                # Try to get provider-specific name
-                provider = obj.created_by_provider
-                if hasattr(provider, 'doctor_profile'):
-                    doctor = provider.doctor_profile
-                    return f'Dr. {doctor.first_name} {doctor.last_name}'
-                elif hasattr(provider, 'nurse_profile'):
-                    nurse = provider.nurse_profile
-                    return f'{nurse.first_name} {nurse.last_name}'
-                elif hasattr(provider, 'clinic_profile'):
-                    return provider.clinic_profile.clinic_name
-                elif hasattr(provider, 'laboratory_profile'):
-                    return provider.laboratory_profile.lab_name
-                else:
-                    return provider.user.email
-            except Exception:
-                return str(obj.created_by_provider)
+            from common.utils import get_provider_display_name
+            return get_provider_display_name(obj.created_by_provider)
         return None
 
 
@@ -267,21 +252,9 @@ class ProviderPatientAccessSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
     
     def get_provider_name(self, obj):
-        """Return the provider's display name."""
-        try:
-            provider = obj.provider
-            if hasattr(provider, 'doctor_profile'):
-                doctor = provider.doctor_profile
-                return f'Dr. {doctor.first_name} {doctor.last_name}'
-            elif hasattr(provider, 'nurse_profile'):
-                nurse = provider.nurse_profile
-                return f'{nurse.first_name} {nurse.last_name}'
-            elif hasattr(provider, 'clinic_profile'):
-                return provider.clinic_profile.clinic_name
-            else:
-                return provider.user.email
-        except Exception:
-            return str(obj.provider)
+        """Return the provider's display name using centralized utility."""
+        from common.utils import get_provider_display_name
+        return get_provider_display_name(obj.provider)
 
 
 class GrantAccessSerializer(serializers.Serializer):

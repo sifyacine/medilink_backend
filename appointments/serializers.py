@@ -25,11 +25,13 @@ from .services import SchedulingService
 from providers.models.provider import Provider
 from patients.models import PatientRecord
 from accounts.models import User
+from common.utils import get_patient_display_name, get_provider_display_name
 
 
 class AppointmentListSerializer(serializers.ModelSerializer):
     """
     Lightweight serializer for listing appointments.
+    Uses centralized utilities for consistent patient/provider name display.
     """
     provider_name = serializers.SerializerMethodField()
     patient_name = serializers.SerializerMethodField()
@@ -37,6 +39,7 @@ class AppointmentListSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     location_type_display = serializers.CharField(source='get_location_type_display', read_only=True)
     is_upcoming = serializers.BooleanField(read_only=True)
+    allowed_actions = serializers.SerializerMethodField()
     
     class Meta:
         model = Appointment
@@ -55,19 +58,29 @@ class AppointmentListSerializer(serializers.ModelSerializer):
             'status_display',
             'reason',
             'is_upcoming',
+            'allowed_actions',
             'created_at',
         ]
     
     def get_provider_name(self, obj):
-        return obj.provider.user.get_full_name() or obj.provider.user.email
+        """Use centralized provider name helper."""
+        return get_provider_display_name(obj.provider)
     
     def get_patient_name(self, obj):
-        return obj.get_patient_display_name()
+        """Use centralized patient name helper."""
+        return get_patient_display_name(obj.patient_user, obj.patient_record)
+    
+    def get_allowed_actions(self, obj):
+        """Get allowed actions for this appointment based on current user."""
+        request = self.context.get('request')
+        user = request.user if request else None
+        return obj.get_allowed_actions(user)
 
 
 class AppointmentDetailSerializer(serializers.ModelSerializer):
     """
     Detailed serializer for viewing full appointment information.
+    Uses centralized utilities for consistent data presentation.
     """
     provider_name = serializers.SerializerMethodField()
     provider_email = serializers.EmailField(source='provider.user.email', read_only=True)
@@ -88,6 +101,7 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
     
     is_upcoming = serializers.BooleanField(read_only=True)
     is_past = serializers.BooleanField(read_only=True)
+    allowed_actions = serializers.SerializerMethodField()
     
     class Meta:
         model = Appointment
@@ -136,6 +150,7 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
             'completed_at',
             'is_upcoming',
             'is_past',
+            'allowed_actions',
             'created_at',
             'updated_at',
         ]
@@ -152,24 +167,22 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
         ]
     
     def get_provider_name(self, obj):
-        return obj.provider.user.get_full_name() or obj.provider.user.email
+        """Use centralized provider name helper."""
+        return get_provider_display_name(obj.provider)
     
     def get_patient_name(self, obj):
-        return obj.get_patient_display_name()
+        """Use centralized patient name helper."""
+        return get_patient_display_name(obj.patient_user, obj.patient_record)
     
     def get_patient_email(self, obj):
-        if obj.patient_user:
-            return obj.patient_user.email
-        if obj.patient_record:
-            return obj.patient_record.email
-        return None
+        """Use centralized patient email helper."""
+        from common.utils import get_patient_email
+        return get_patient_email(obj.patient_user, obj.patient_record)
     
     def get_patient_phone(self, obj):
-        if obj.patient_user:
-            return getattr(obj.patient_user, 'phone_number', None)
-        if obj.patient_record:
-            return obj.patient_record.phone_number
-        return None
+        """Use centralized patient phone helper."""
+        from common.utils import get_patient_phone
+        return get_patient_phone(obj.patient_user, obj.patient_record)
     
     def get_created_by_name(self, obj):
         if obj.created_by:
@@ -180,6 +193,12 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
         if obj.cancelled_by:
             return obj.cancelled_by.get_full_name() or obj.cancelled_by.email
         return None
+    
+    def get_allowed_actions(self, obj):
+        """Get allowed actions for this appointment based on current user."""
+        request = self.context.get('request')
+        user = request.user if request else None
+        return obj.get_allowed_actions(user)
 
 
 class AppointmentCreateSerializer(serializers.ModelSerializer):
@@ -295,9 +314,11 @@ class AppointmentUpdateSerializer(serializers.ModelSerializer):
     Only certain fields can be updated after creation.
     
     Restrictions:
-    - Cannot update completed or cancelled appointments
+    - Cannot update terminal (completed/cancelled) appointments
     - Cannot change provider, service, or time after confirmation (unless rescheduling)
     - Validates scheduling conflicts on time changes
+    
+    Uses centralized status helpers for consistent validation.
     """
     class Meta:
         model = Appointment
@@ -315,15 +336,14 @@ class AppointmentUpdateSerializer(serializers.ModelSerializer):
         ]
     
     def validate(self, attrs):
+        from common.domain_helpers import AppointmentStatusTransition
+        
         instance = self.instance
         request = self.context.get('request')
         user = request.user if request else None
         
-        # Cannot update completed or cancelled appointments
-        if instance and instance.status in [
-            AppointmentStatus.COMPLETED,
-            AppointmentStatus.CANCELLED
-        ]:
+        # Cannot update terminal appointments
+        if instance and AppointmentStatusTransition.is_terminal(instance.status):
             raise serializers.ValidationError(
                 f'Cannot update appointment with status {instance.status}'
             )
@@ -457,11 +477,19 @@ class AppointmentRescheduleSerializer(serializers.Serializer):
         if not instance:
             raise serializers.ValidationError("Appointment instance required.")
         
-        # Only PENDING or CONFIRMED can be rescheduled
-        if instance.status not in [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]:
-            raise serializers.ValidationError({
-                'status': f'Cannot reschedule appointment with status {instance.status}'
-            })
+        # Use centralized status transition validation
+        from common.domain_helpers import AppointmentStatusTransition
+        if not AppointmentStatusTransition.can_transition(instance.status, AppointmentStatus.RESCHEDULED):
+            allowed = AppointmentStatusTransition.get_allowed_transitions(instance.status)
+            if allowed:
+                raise serializers.ValidationError({
+                    'status': f'Cannot reschedule appointment with status {instance.status}. '
+                              f'Allowed transitions: {", ".join(sorted(allowed))}'
+                })
+            else:
+                raise serializers.ValidationError({
+                    'status': f'Cannot reschedule appointment with status {instance.status}.'
+                })
         
         # Validate against past dates
         scheduled_date = attrs.get('scheduled_date')
@@ -577,7 +605,7 @@ class AvailableSlotSerializer(serializers.Serializer):
 class AppointmentHistorySerializer(serializers.ModelSerializer):
     """
     Serializer for appointment history listing.
-    Optimized for showing past appointments.
+    Optimized for showing past appointments with centralized helpers.
     """
     provider_name = serializers.SerializerMethodField()
     patient_name = serializers.SerializerMethodField()
@@ -612,10 +640,12 @@ class AppointmentHistorySerializer(serializers.ModelSerializer):
         ]
     
     def get_provider_name(self, obj):
-        return obj.provider.user.get_full_name() or obj.provider.user.email
+        """Use centralized provider name helper."""
+        return get_provider_display_name(obj.provider)
     
     def get_patient_name(self, obj):
-        return obj.get_patient_display_name()
+        """Use centralized patient name helper."""
+        return get_patient_display_name(obj.patient_user, obj.patient_record)
 
 
 class ProviderScheduleSerializer(serializers.Serializer):

@@ -21,6 +21,7 @@ from .models import (
     AppointmentLocationType,
 )
 from providers.models import Provider
+from common.domain_helpers import BookingWindowValidator, AppointmentStatusTransition
 
 
 class SchedulingService:
@@ -33,11 +34,9 @@ class SchedulingService:
     - Time slot generation
     """
     
-    # Minimum booking notice in hours
-    MIN_BOOKING_NOTICE_HOURS = 1
-    
-    # Maximum advance booking in days
-    MAX_ADVANCE_BOOKING_DAYS = 90
+    # Use centralized booking window configuration
+    MIN_BOOKING_NOTICE_HOURS = BookingWindowValidator.MIN_BOOKING_NOTICE_HOURS
+    MAX_ADVANCE_BOOKING_DAYS = BookingWindowValidator.MAX_ADVANCE_BOOKING_DAYS
     
     @classmethod
     def check_provider_available(
@@ -165,6 +164,9 @@ class SchedulingService:
         """
         Check for double-booking conflicts.
         
+        Uses centralized status definitions to determine which appointments
+        should be considered for conflict checking.
+        
         Returns:
             Tuple of (has_conflict, message)
         """
@@ -184,15 +186,13 @@ class SchedulingService:
         
         max_concurrent = availability.max_appointments if availability else 1
         
-        # Find overlapping appointments (not cancelled/completed)
+        # Find overlapping appointments using centralized active statuses
+        # These are statuses that should block the time slot
+        active_statuses = list(AppointmentStatusTransition.ACTIVE_STATUSES)
         overlapping_query = Appointment.objects.filter(
             provider=provider,
             scheduled_date=scheduled_date,
-            status__in=[
-                AppointmentStatus.PENDING,
-                AppointmentStatus.CONFIRMED,
-                AppointmentStatus.RESCHEDULED
-            ]
+            status__in=active_statuses
         )
         
         # Exclude the current appointment if rescheduling
@@ -438,14 +438,16 @@ class AppointmentService:
         """
         Reschedule an existing appointment.
         
-        Only PENDING or CONFIRMED appointments can be rescheduled.
+        Uses centralized status transition validation to ensure only
+        valid statuses can be rescheduled.
         """
         from .models import AppointmentStatus
         
-        if appointment.status not in [AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]:
-            raise ValidationError(
-                f"Cannot reschedule appointment with status {appointment.status}"
-            )
+        # Use centralized validation
+        AppointmentStatusTransition.validate_transition(
+            appointment.status, 
+            AppointmentStatus.RESCHEDULED
+        )
         
         # Check availability for new slot (excluding current appointment)
         is_available, message = SchedulingService.check_provider_available(
@@ -460,7 +462,7 @@ class AppointmentService:
         if not is_available:
             raise ValidationError(message)
         
-        # Store old values for notification
+        # Store old values for notification/audit
         old_date = appointment.scheduled_date
         old_time = appointment.scheduled_time
         

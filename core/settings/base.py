@@ -118,6 +118,8 @@ REST_FRAMEWORK = {
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ],
+    # Custom exception handler for consistent API error responses
+    'EXCEPTION_HANDLER': 'common.exception_handlers.medilink_exception_handler',
 }
 
 # dj-rest-auth Configuration (Token-based, not JWT)

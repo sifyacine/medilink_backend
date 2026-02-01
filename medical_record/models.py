@@ -70,12 +70,9 @@ class MedicalRecord(models.Model):
     
     @property
     def patient_display_name(self):
-        """Get the patient's display name regardless of link type."""
-        if self.patient:
-            return self.patient.email
-        if self.patient_record:
-            return self.patient_record.full_name
-        return 'Unknown Patient'
+        """Get the patient's display name using centralized utility."""
+        from common.utils import get_patient_display_name
+        return get_patient_display_name(self.patient, self.patient_record)
     
     @property
     def effective_patient_id(self):
