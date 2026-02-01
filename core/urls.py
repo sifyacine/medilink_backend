@@ -51,6 +51,9 @@ urlpatterns = [
     # Reports and moderation endpoints
     path('api/reports/', include('reports.urls')),
     
+    # Invoices endpoints
+    path('api/invoices/', include('invoices.urls')),
+    
     # django-allauth URLs (for email verification pages if needed)
     path('accounts/', include('allauth.urls')),
 ]

@@ -84,7 +84,13 @@ INSTALLED_APPS = [
     'nurse_requests',  # On-demand nursing services
     'reviews',  # Universal reviews and ratings system
     'reports',  # Universal reporting and moderation system
+    'invoices',  # Invoice and payment management
 ]
+
+# Invoice Settings
+MEDILINK_AUTO_INVOICE_APPOINTMENTS = False  # Auto-create invoice on appointment completion
+MEDILINK_AUTO_INVOICE_NURSE_REQUESTS = False  # Auto-create invoice on nurse request completion
+MEDILINK_AUTO_SEND_INVOICES = False  # Auto-send invoices when created
 
 SITE_ID = 1
 
