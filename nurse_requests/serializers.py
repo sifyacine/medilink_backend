@@ -285,7 +285,8 @@ class NurseAvailableRequestSerializer(serializers.ModelSerializer):
         nurse = self.context.get('nurse')
         if nurse:
             try:
-                offer = obj.offers.get(nurse=nurse)
+                # NurseOffer.nurse is FK to Provider, not Nurse
+                offer = obj.offers.get(nurse=nurse.provider)
                 return NurseOfferSerializer(offer).data
             except NurseOffer.DoesNotExist:
                 return None
