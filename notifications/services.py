@@ -1,7 +1,10 @@
 """
 Services for the Notifications app.
 
-Provides FCM push notification service and notification management.
+Provides:
+- FCMService: Firebase Cloud Messaging for push notifications (mobile + web)
+- NotificationService: Notification management with WebSocket broadcast
+- WebSocketBroadcaster: Real-time WebSocket notification delivery
 """
 import logging
 from typing import Optional, List, Dict, Any
@@ -9,6 +12,7 @@ from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
+from asgiref.sync import async_to_sync
 
 logger = logging.getLogger(__name__)
 
@@ -234,11 +238,241 @@ class FCMService:
         except Exception as e:
             logger.error(f'Failed to send topic notification: {e}')
             return None
+    
+    @classmethod
+    def send_web_push(
+        cls,
+        token: str,
+        title: str,
+        body: str,
+        data: Optional[Dict[str, str]] = None,
+        icon_url: Optional[str] = None,
+        click_action: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Send Web Push notification via FCM.
+        
+        Specifically configured for browser push notifications.
+        
+        Args:
+            token: Browser FCM token
+            title: Notification title
+            body: Notification body
+            data: Custom data payload
+            icon_url: Notification icon URL
+            click_action: URL to open when notification is clicked
+        
+        Returns:
+            Message ID on success, None on failure
+        """
+        if not cls.is_available():
+            return None
+        
+        try:
+            from firebase_admin import messaging
+            
+            # Web-specific configuration
+            webpush_config = messaging.WebpushConfig(
+                notification=messaging.WebpushNotification(
+                    title=title,
+                    body=body,
+                    icon=icon_url or '/static/icons/notification-icon.png',
+                ),
+                fcm_options=messaging.WebpushFCMOptions(
+                    link=click_action or '/'
+                )
+            )
+            
+            message = messaging.Message(
+                data=data or {},
+                token=token,
+                webpush=webpush_config,
+            )
+            
+            response = messaging.send(message)
+            logger.info(f'Web push notification sent: {response}')
+            return response
+            
+        except Exception as e:
+            logger.error(f'Failed to send web push: {e}')
+            return None
+
+
+class WebSocketBroadcaster:
+    """
+    Service for broadcasting messages via WebSocket using Django Channels.
+    
+    Provides real-time notification delivery to connected clients.
+    """
+    
+    @classmethod
+    def _get_channel_layer(cls):
+        """Get the Channels layer."""
+        try:
+            from channels.layers import get_channel_layer
+            return get_channel_layer()
+        except ImportError:
+            logger.warning('Django Channels not installed')
+            return None
+    
+    @classmethod
+    def send_to_user(cls, user_id, message_type: str, data: Dict[str, Any]):
+        """
+        Send message to a specific user via WebSocket.
+        
+        Args:
+            user_id: User ID to send to
+            message_type: Type of message (e.g., 'notification', 'appointment_updated')
+            data: Message data
+        """
+        channel_layer = cls._get_channel_layer()
+        if not channel_layer:
+            return
+        
+        group_name = f'user_{user_id}_notifications'
+        
+        try:
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    'type': message_type,
+                    **data
+                }
+            )
+            logger.debug(f'WebSocket message sent to user {user_id}')
+        except Exception as e:
+            logger.error(f'Failed to send WebSocket message to user {user_id}: {e}')
+    
+    @classmethod
+    def send_to_provider(cls, provider_id, message_type: str, data: Dict[str, Any]):
+        """
+        Send message to a provider (doctor/nurse) via appointment WebSocket.
+        
+        Args:
+            provider_id: Provider ID to send to
+            message_type: Type of message (e.g., 'new_appointment')
+            data: Message data
+        """
+        channel_layer = cls._get_channel_layer()
+        if not channel_layer:
+            return
+        
+        group_name = f'provider_{provider_id}_appointments'
+        
+        try:
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    'type': message_type,
+                    **data
+                }
+            )
+            logger.debug(f'WebSocket message sent to provider {provider_id}')
+        except Exception as e:
+            logger.error(f'Failed to send WebSocket message to provider {provider_id}: {e}')
+    
+    @classmethod
+    def send_to_patient(cls, user_id, message_type: str, data: Dict[str, Any]):
+        """
+        Send message to a patient via appointment WebSocket.
+        
+        Args:
+            user_id: User ID of the patient
+            message_type: Type of message
+            data: Message data
+        """
+        channel_layer = cls._get_channel_layer()
+        if not channel_layer:
+            return
+        
+        group_name = f'patient_{user_id}_appointments'
+        
+        try:
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    'type': message_type,
+                    **data
+                }
+            )
+            logger.debug(f'WebSocket message sent to patient {user_id}')
+        except Exception as e:
+            logger.error(f'Failed to send WebSocket message to patient {user_id}: {e}')
+    
+    @classmethod
+    def send_to_role(cls, role: str, message_type: str, data: Dict[str, Any]):
+        """
+        Broadcast message to all users with a specific role.
+        
+        Args:
+            role: Role name (e.g., 'PROVIDER', 'PATIENT', 'ADMIN')
+            message_type: Type of message
+            data: Message data
+        """
+        channel_layer = cls._get_channel_layer()
+        if not channel_layer:
+            return
+        
+        group_name = f'role_{role}_notifications'
+        
+        try:
+            async_to_sync(channel_layer.group_send)(
+                group_name,
+                {
+                    'type': message_type,
+                    **data
+                }
+            )
+            logger.debug(f'WebSocket message broadcast to role {role}')
+        except Exception as e:
+            logger.error(f'Failed to broadcast WebSocket message to role {role}: {e}')
+    
+    @classmethod
+    def broadcast_notification(cls, user_id, notification_data: Dict[str, Any]):
+        """
+        Broadcast a new notification to user's WebSocket connections.
+        
+        Args:
+            user_id: User ID to notify
+            notification_data: Serialized notification data
+        """
+        cls.send_to_user(user_id, 'notification', {'notification': notification_data})
+    
+    @classmethod
+    def broadcast_appointment_event(
+        cls,
+        provider_id,
+        patient_user_id,
+        event_type: str,
+        appointment_data: Dict[str, Any],
+        message: str = None
+    ):
+        """
+        Broadcast an appointment event to both provider and patient.
+        
+        Args:
+            provider_id: Provider ID
+            patient_user_id: Patient's user ID (can be None)
+            event_type: Event type ('new_appointment', 'appointment_updated', etc.)
+            appointment_data: Serialized appointment data
+            message: Optional message to include
+        """
+        event_data = {
+            'appointment': appointment_data,
+            'message': message,
+        }
+        
+        # Send to provider
+        cls.send_to_provider(provider_id, event_type, event_data)
+        
+        # Send to patient if they have a user account
+        if patient_user_id:
+            cls.send_to_patient(patient_user_id, event_type, event_data)
 
 
 class NotificationService:
     """
-    Service for managing notifications.
+    Service for managing notifications with WebSocket and FCM integration.
     """
     
     @classmethod
@@ -255,10 +489,11 @@ class NotificationService:
         data: Optional[Dict] = None,
         image_url: Optional[str] = None,
         send_push: bool = True,
+        send_websocket: bool = True,
         expires_at=None,
     ):
         """
-        Create a notification and optionally send push.
+        Create a notification with push and WebSocket delivery.
         
         Args:
             recipient: User to notify
@@ -271,7 +506,8 @@ class NotificationService:
             action_url: URL/route for navigation
             data: Additional JSON data
             image_url: Image URL for rich notification
-            send_push: Whether to send push notification
+            send_push: Whether to send FCM push notification
+            send_websocket: Whether to broadcast via WebSocket
             expires_at: When notification expires
         
         Returns:
@@ -303,11 +539,122 @@ class NotificationService:
         # Create notification
         notification = Notification.objects.create(**notification_data)
         
-        # Send push notification if enabled
+        # Broadcast via WebSocket for real-time delivery
+        if send_websocket:
+            cls._broadcast_via_websocket(notification)
+        
+        # Send FCM push notification if enabled
         if send_push:
             cls._send_push_for_notification(notification)
         
         return notification
+    
+    @classmethod
+    def create_for_object(
+        cls,
+        recipient,
+        title: str,
+        message: str,
+        related_object,
+        notification_type: str = 'GENERAL',
+        priority: str = 'NORMAL',
+        action_url: str = '',
+        data: Optional[Dict] = None,
+        send_push: bool = True,
+        send_websocket: bool = True,
+    ):
+        """
+        Create a notification linked to a specific object.
+        
+        Convenience method for creating notifications with related objects.
+        Auto-determines category based on notification type.
+        
+        Args:
+            recipient: User to notify
+            title: Notification title
+            message: Notification body
+            related_object: Related model instance (Appointment, etc.)
+            notification_type: Type from NotificationType
+            priority: Priority from NotificationPriority
+            action_url: URL/route for navigation
+            data: Additional JSON data
+            send_push: Whether to send FCM push notification
+            send_websocket: Whether to broadcast via WebSocket
+        
+        Returns:
+            Created Notification instance
+        """
+        from .models import NotificationType as NT, NotificationCategory
+        
+        # Auto-determine category from notification type
+        type_to_category = {
+            NT.APPOINTMENT_CREATED: NotificationCategory.APPOINTMENTS,
+            NT.APPOINTMENT_CONFIRMED: NotificationCategory.APPOINTMENTS,
+            NT.APPOINTMENT_CANCELLED: NotificationCategory.APPOINTMENTS,
+            NT.APPOINTMENT_UPDATED: NotificationCategory.APPOINTMENTS,
+            NT.APPOINTMENT_REMINDER: NotificationCategory.REMINDERS,
+            NT.APPOINTMENT_COMPLETED: NotificationCategory.APPOINTMENTS,
+            NT.ACCOUNT_VERIFIED: NotificationCategory.ACCOUNT,
+            NT.ACCOUNT_SUSPENDED: NotificationCategory.ACCOUNT,
+            NT.PROVIDER_APPROVED: NotificationCategory.ACCOUNT,
+            NT.PROVIDER_REFUSED: NotificationCategory.ACCOUNT,
+            NT.PATIENT_RECORD_CREATED: NotificationCategory.ACCOUNT,
+            NT.PATIENT_ACCOUNT_LINKED: NotificationCategory.ACCOUNT,
+            NT.SYSTEM_ANNOUNCEMENT: NotificationCategory.SYSTEM,
+            NT.SYSTEM_MAINTENANCE: NotificationCategory.SYSTEM,
+            NT.MESSAGE: NotificationCategory.MESSAGES,
+            NT.GENERAL: NotificationCategory.SYSTEM,
+        }
+        
+        category = type_to_category.get(notification_type, NotificationCategory.SYSTEM)
+        
+        return cls.create_notification(
+            recipient=recipient,
+            title=title,
+            message=message,
+            notification_type=notification_type,
+            category=category,
+            priority=priority,
+            related_object=related_object,
+            action_url=action_url,
+            data=data,
+            send_push=send_push,
+            send_websocket=send_websocket,
+        )
+    
+    @classmethod
+    def _broadcast_via_websocket(cls, notification):
+        """Broadcast notification via WebSocket for real-time delivery."""
+        try:
+            # Serialize notification for WebSocket
+            notification_data = {
+                'id': str(notification.id),
+                'title': notification.title,
+                'message': notification.message,
+                'type': notification.notification_type,
+                'category': notification.category,
+                'priority': notification.priority,
+                'action_url': notification.action_url,
+                'is_read': notification.is_read,
+                'created_at': notification.created_at.isoformat(),
+                'data': notification.data,
+            }
+            
+            if notification.image_url:
+                notification_data['image_url'] = notification.image_url
+            
+            if notification.related_object_id:
+                notification_data['related_object_id'] = notification.related_object_id
+                notification_data['related_type'] = notification.related_content_type.model if notification.related_content_type else None
+            
+            # Broadcast to user
+            WebSocketBroadcaster.broadcast_notification(
+                user_id=notification.recipient_id,
+                notification_data=notification_data
+            )
+            
+        except Exception as e:
+            logger.error(f'Failed to broadcast notification via WebSocket: {e}')
     
     @classmethod
     def create_bulk_notifications(

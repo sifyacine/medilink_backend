@@ -1,15 +1,21 @@
 """
 Signals for the appointments app.
 
-Creates notifications when appointment events occur.
+Creates real-time notifications when appointment events occur.
+- WebSocket for instant browser updates
+- FCM Push for mobile notifications
+- In-app notifications stored in database
+
 Automatically adds patients to provider's patient list on confirmation.
 """
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
+import logging
 
 from .models import Appointment, AppointmentStatus
-from notifications.services import NotificationService
-from notifications.models import NotificationType, NotificationPriority
+from .notifications import AppointmentNotifier
+
+logger = logging.getLogger(__name__)
 
 
 # Track status changes
@@ -33,181 +39,92 @@ def track_appointment_status_change(sender, instance, **kwargs):
 def handle_appointment_save(sender, instance, created, **kwargs):
     """
     Handle appointment save events and create appropriate notifications.
+    
+    Uses AppointmentNotifier for:
+    - Real-time WebSocket delivery (doctor sees instantly)
+    - FCM push notifications (mobile/web)
+    - In-app notification storage
     """
-    if created:
-        _notify_appointment_created(instance)
-    else:
-        previous_status = _previous_status.get(instance.pk)
-        current_status = instance.status
-        
-        if previous_status != current_status:
-            _notify_status_change(instance, previous_status, current_status)
-        
-        # Cleanup
-        if instance.pk in _previous_status:
-            del _previous_status[instance.pk]
-
-
-def _notify_appointment_created(appointment):
-    """
-    Send notifications when a new appointment is created.
-    
-    Notifies:
-    - Provider when a patient books
-    - Patient when a provider creates the appointment
-    """
-    created_by = appointment.created_by
-    provider_user = appointment.provider.user
-    patient_user = appointment.patient_user
-    
-    # Get patient name for notification message
-    patient_name = appointment.get_patient_display_name()
-    provider_name = provider_user.get_full_name() or provider_user.email
-    
-    date_str = appointment.scheduled_date.strftime('%B %d, %Y')
-    time_str = appointment.scheduled_time.strftime('%I:%M %p')
-    
-    # If patient created the appointment, notify the provider
-    if created_by and created_by != provider_user:
-        NotificationService.create_for_object(
-            recipient=provider_user,
-            title='New Appointment Request',
-            message=f'{patient_name} has requested an appointment on {date_str} at {time_str}.',
-            related_object=appointment,
-            notification_type=NotificationType.APPOINTMENT_CREATED,
-            priority=NotificationPriority.HIGH,
-            action_url=f'/appointments/{appointment.pk}'
-        )
-    
-    # If provider created the appointment, notify the patient (if they have an account)
-    if patient_user and created_by and created_by == provider_user:
-        NotificationService.create_for_object(
-            recipient=patient_user,
-            title='New Appointment Scheduled',
-            message=f'An appointment has been scheduled with {provider_name} on {date_str} at {time_str}.',
-            related_object=appointment,
-            notification_type=NotificationType.APPOINTMENT_CREATED,
-            priority=NotificationPriority.HIGH,
-            action_url=f'/appointments/{appointment.pk}'
-        )
-
-
-def _notify_status_change(appointment, old_status, new_status):
-    """
-    Send notifications when appointment status changes.
-    """
-    provider_user = appointment.provider.user
-    patient_user = appointment.patient_user
-    
-    patient_name = appointment.get_patient_display_name()
-    provider_name = provider_user.get_full_name() or provider_user.email
-    
-    date_str = appointment.scheduled_date.strftime('%B %d, %Y')
-    time_str = appointment.scheduled_time.strftime('%I:%M %p')
-    
-    if new_status == AppointmentStatus.CONFIRMED:
-        # Notify patient that appointment is confirmed
-        if patient_user:
-            NotificationService.create_for_object(
-                recipient=patient_user,
-                title='Appointment Confirmed',
-                message=f'Your appointment with {provider_name} on {date_str} at {time_str} has been confirmed.',
-                related_object=appointment,
-                notification_type=NotificationType.APPOINTMENT_CONFIRMED,
-                priority=NotificationPriority.HIGH,
-                action_url=f'/appointments/{appointment.pk}'
+    try:
+        if created:
+            # New appointment created
+            AppointmentNotifier.notify_new_appointment(
+                appointment=instance,
+                created_by=instance.created_by
             )
-        
-        # IMPORTANT: Add patient to provider's patient list on confirmation
-        _add_patient_to_provider_list(appointment)
-    
-    elif new_status == AppointmentStatus.CANCELLED:
-        cancelled_by = appointment.cancelled_by
-        reason = appointment.cancellation_notes or appointment.get_cancellation_reason_display()
-        
-        # Notify the other party about cancellation
-        if cancelled_by == patient_user:
-            # Patient cancelled, notify provider
-            NotificationService.create_for_object(
-                recipient=provider_user,
-                title='Appointment Cancelled',
-                message=f'{patient_name} has cancelled their appointment on {date_str}. Reason: {reason}',
-                related_object=appointment,
-                notification_type=NotificationType.APPOINTMENT_CANCELLED,
-                priority=NotificationPriority.HIGH,
-                action_url=f'/appointments/{appointment.pk}'
-            )
-        elif cancelled_by == provider_user:
-            # Provider cancelled, notify patient
-            if patient_user:
-                NotificationService.create_for_object(
-                    recipient=patient_user,
-                    title='Appointment Cancelled',
-                    message=f'Your appointment with {provider_name} on {date_str} has been cancelled. Reason: {reason}',
-                    related_object=appointment,
-                    notification_type=NotificationType.APPOINTMENT_CANCELLED,
-                    priority=NotificationPriority.HIGH,
-                    action_url=f'/appointments/{appointment.pk}'
-                )
         else:
-            # Admin or system cancelled, notify both
-            NotificationService.create_for_object(
-                recipient=provider_user,
-                title='Appointment Cancelled',
-                message=f'The appointment with {patient_name} on {date_str} has been cancelled.',
-                related_object=appointment,
-                notification_type=NotificationType.APPOINTMENT_CANCELLED,
-                priority=NotificationPriority.NORMAL,
-                action_url=f'/appointments/{appointment.pk}'
+            previous_status = _previous_status.get(instance.pk)
+            current_status = instance.status
+            
+            if previous_status != current_status:
+                _handle_status_change(instance, previous_status, current_status)
+            
+            # Cleanup
+            if instance.pk in _previous_status:
+                del _previous_status[instance.pk]
+    except Exception as e:
+        logger.error(f"Error handling appointment save signal: {e}")
+
+
+def _handle_status_change(appointment, old_status, new_status):
+    """
+    Handle appointment status changes and send appropriate notifications.
+    """
+    try:
+        if new_status == AppointmentStatus.CONFIRMED:
+            AppointmentNotifier.notify_appointment_confirmed(appointment)
+            _add_patient_to_provider_list(appointment)
+        
+        elif new_status == AppointmentStatus.CANCELLED:
+            cancelled_by = appointment.cancelled_by
+            reason = appointment.cancellation_notes or (
+                appointment.get_cancellation_reason_display() 
+                if hasattr(appointment, 'get_cancellation_reason_display') else None
             )
-            if patient_user:
-                NotificationService.create_for_object(
-                    recipient=patient_user,
-                    title='Appointment Cancelled',
-                    message=f'Your appointment with {provider_name} on {date_str} has been cancelled.',
-                    related_object=appointment,
-                    notification_type=NotificationType.APPOINTMENT_CANCELLED,
-                    priority=NotificationPriority.NORMAL,
-                    action_url=f'/appointments/{appointment.pk}'
-                )
-    
-    elif new_status == AppointmentStatus.COMPLETED:
-        # Notify patient that appointment is completed (for their records)
-        if patient_user:
-            NotificationService.create_for_object(
-                recipient=patient_user,
-                title='Appointment Completed',
-                message=f'Your appointment with {provider_name} on {date_str} has been completed.',
-                related_object=appointment,
-                notification_type=NotificationType.APPOINTMENT_COMPLETED,
-                priority=NotificationPriority.NORMAL,
-                action_url=f'/appointments/{appointment.pk}'
-            )
-    
-    elif new_status == AppointmentStatus.RESCHEDULED:
-        # Both parties should be notified
-        NotificationService.create_for_object(
-            recipient=provider_user,
-            title='Appointment Rescheduled',
-            message=f'The appointment with {patient_name} has been rescheduled to {date_str} at {time_str}.',
-            related_object=appointment,
-            notification_type=NotificationType.APPOINTMENT_UPDATED,
-            priority=NotificationPriority.HIGH,
-            action_url=f'/appointments/{appointment.pk}'
-        )
-        if patient_user:
-            NotificationService.create_for_object(
-                recipient=patient_user,
-                title='Appointment Rescheduled',
-                message=f'Your appointment with {provider_name} has been rescheduled to {date_str} at {time_str}.',
-                related_object=appointment,
-                notification_type=NotificationType.APPOINTMENT_UPDATED,
-                priority=NotificationPriority.HIGH,
-                action_url=f'/appointments/{appointment.pk}'
+            AppointmentNotifier.notify_appointment_cancelled(
+                appointment=appointment,
+                cancelled_by=cancelled_by,
+                reason=reason
             )
         
-        # IMPORTANT: Add patient to provider's patient list on reschedule (if not already)
-        _add_patient_to_provider_list(appointment)
+        elif new_status == AppointmentStatus.COMPLETED:
+            AppointmentNotifier.notify_appointment_completed(appointment)
+        
+        elif new_status == AppointmentStatus.RESCHEDULED:
+            AppointmentNotifier.notify_appointment_rescheduled(appointment)
+            _add_patient_to_provider_list(appointment)
+        
+        elif new_status == AppointmentStatus.REJECTED:
+            # Provider rejected the appointment request
+            _notify_appointment_rejected(appointment)
+        
+    except Exception as e:
+        logger.error(f"Error handling status change notification: {e}")
+
+
+def _notify_appointment_rejected(appointment):
+    """Notify patient that their appointment was rejected."""
+    from notifications.services import NotificationService
+    from notifications.models import NotificationType, NotificationPriority
+    
+    patient_user = appointment.patient_user
+    if not patient_user:
+        return
+    
+    provider_name = appointment.provider.user.get_full_name() or appointment.provider.user.email
+    date_str = appointment.scheduled_date.strftime('%B %d, %Y')
+    
+    reason = appointment.rejection_notes if hasattr(appointment, 'rejection_notes') else 'No reason provided'
+    
+    NotificationService.create_for_object(
+        recipient=patient_user,
+        title='Appointment Request Declined',
+        message=f'Your appointment request with {provider_name} on {date_str} was not accepted. {reason}',
+        related_object=appointment,
+        notification_type=NotificationType.APPOINTMENT_CANCELLED,
+        priority=NotificationPriority.NORMAL,
+        action_url=f'/appointments/{appointment.pk}',
+    )
 
 
 def _add_patient_to_provider_list(appointment):
