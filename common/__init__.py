@@ -6,6 +6,7 @@ This package provides:
 - domain_helpers: Business logic helpers (status transitions, permission helpers)
 - exceptions: Custom domain exceptions
 - exception_handlers: Custom DRF exception handler for consistent API responses
+- i18n: Internationalization utilities (multilingual content support)
 - permissions: Base permission classes
 - enums: Centralized enumerations
 - validators: Custom validators
@@ -40,6 +41,18 @@ from common.exceptions import (
     PermissionException,
 )
 
+from common.i18n import (
+    SUPPORTED_LANGUAGES,
+    DEFAULT_LANGUAGE,
+    get_language_from_request,
+    get_localized_field,
+    get_all_translations,
+    MultilingualSerializerMixin,
+    LocalizedFieldsMixin,
+    LocalizedCharField,
+    TranslationsField,
+)
+
 __all__ = [
     # Utils
     'get_patient_display_name',
@@ -63,4 +76,14 @@ __all__ = [
     'PatientException',
     'ProviderException',
     'PermissionException',
+    # i18n
+    'SUPPORTED_LANGUAGES',
+    'DEFAULT_LANGUAGE',
+    'get_language_from_request',
+    'get_localized_field',
+    'get_all_translations',
+    'MultilingualSerializerMixin',
+    'LocalizedFieldsMixin',
+    'LocalizedCharField',
+    'TranslationsField',
 ]

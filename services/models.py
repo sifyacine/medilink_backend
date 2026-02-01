@@ -22,24 +22,67 @@ class ServiceType(models.TextChoices):
     GENERAL = 'GENERAL', 'General Service'
 
 
+class SupportedLanguage(models.TextChoices):
+    """Supported languages for multilingual content."""
+    ENGLISH = 'en', 'English'
+    ARABIC = 'ar', 'Arabic'
+    FRENCH = 'fr', 'French'
+
+
 class Service(models.Model):
     """
     Service model for doctors and nurses.
     Services can be linked to specialties.
+    
+    Supports multilingual content for title and description (en, ar, fr).
     """
+    # Primary title (used as fallback and for slug generation)
     title = models.CharField(
         max_length=200,
         db_index=True,
-        help_text='Service title'
+        help_text='Primary title (English by default)'
     )
     slug = models.SlugField(
         max_length=200,
         db_index=True,
         help_text='URL-friendly identifier'
     )
+    
+    # Multilingual titles
+    title_en = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='English title'
+    )
+    title_ar = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='Arabic title'
+    )
+    title_fr = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='French title'
+    )
+    
+    # Primary description (used as fallback)
     description = models.TextField(
         blank=True,
-        help_text='Service description'
+        help_text='Primary description (English by default)'
+    )
+    
+    # Multilingual descriptions
+    description_en = models.TextField(
+        blank=True,
+        help_text='English description'
+    )
+    description_ar = models.TextField(
+        blank=True,
+        help_text='Arabic description'
+    )
+    description_fr = models.TextField(
+        blank=True,
+        help_text='French description'
     )
     
     # Service Type - determines which provider type can offer this service
@@ -130,7 +173,65 @@ class Service(models.Model):
         """Auto-generate slug from title if not provided."""
         if not self.slug:
             self.slug = slugify(self.title)
+        # Auto-populate title_en from title if not set
+        if not self.title_en and self.title:
+            self.title_en = self.title
+        if not self.description_en and self.description:
+            self.description_en = self.description
         super().save(*args, **kwargs)
+    
+    def get_title(self, language: str = 'en') -> str:
+        """
+        Get localized title based on language preference.
+        Falls back to primary title if translation not available.
+        
+        Args:
+            language: Language code ('en', 'ar', 'fr')
+            
+        Returns:
+            Localized title string
+        """
+        lang_map = {
+            'en': self.title_en,
+            'ar': self.title_ar,
+            'fr': self.title_fr,
+        }
+        localized = lang_map.get(language, '')
+        return localized if localized else self.title
+    
+    def get_description(self, language: str = 'en') -> str:
+        """
+        Get localized description based on language preference.
+        Falls back to primary description if translation not available.
+        
+        Args:
+            language: Language code ('en', 'ar', 'fr')
+            
+        Returns:
+            Localized description string
+        """
+        lang_map = {
+            'en': self.description_en,
+            'ar': self.description_ar,
+            'fr': self.description_fr,
+        }
+        localized = lang_map.get(language, '')
+        return localized if localized else self.description
+    
+    def get_localized_data(self, language: str = 'en') -> dict:
+        """
+        Get all localized fields for a given language.
+        
+        Args:
+            language: Language code ('en', 'ar', 'fr')
+            
+        Returns:
+            Dict with localized title and description
+        """
+        return {
+            'title': self.get_title(language),
+            'description': self.get_description(language),
+        }
 
 
 class DoctorService(models.Model):
@@ -276,14 +377,45 @@ class ProviderCustomService(models.Model):
         help_text='Provider who created this custom service'
     )
     
-    # Service details
+    # Service details - Primary fields
     title = models.CharField(
         max_length=200,
-        help_text='Custom service title'
+        help_text='Primary title (English by default)'
     )
     description = models.TextField(
         blank=True,
-        help_text='Service description'
+        help_text='Primary description (English by default)'
+    )
+    
+    # Multilingual titles
+    title_en = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='English title'
+    )
+    title_ar = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='Arabic title'
+    )
+    title_fr = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='French title'
+    )
+    
+    # Multilingual descriptions
+    description_en = models.TextField(
+        blank=True,
+        help_text='English description'
+    )
+    description_ar = models.TextField(
+        blank=True,
+        help_text='Arabic description'
+    )
+    description_fr = models.TextField(
+        blank=True,
+        help_text='French description'
     )
     
     # Pricing
@@ -352,3 +484,38 @@ class ProviderCustomService(models.Model):
     
     def __str__(self):
         return f'{self.provider} - {self.title}'
+    
+    def save(self, *args, **kwargs):
+        """Auto-populate English fields from primary fields."""
+        if not self.title_en and self.title:
+            self.title_en = self.title
+        if not self.description_en and self.description:
+            self.description_en = self.description
+        super().save(*args, **kwargs)
+    
+    def get_title(self, language: str = 'en') -> str:
+        """Get localized title."""
+        lang_map = {
+            'en': self.title_en,
+            'ar': self.title_ar,
+            'fr': self.title_fr,
+        }
+        localized = lang_map.get(language, '')
+        return localized if localized else self.title
+    
+    def get_description(self, language: str = 'en') -> str:
+        """Get localized description."""
+        lang_map = {
+            'en': self.description_en,
+            'ar': self.description_ar,
+            'fr': self.description_fr,
+        }
+        localized = lang_map.get(language, '')
+        return localized if localized else self.description
+    
+    def get_localized_data(self, language: str = 'en') -> dict:
+        """Get all localized fields for a given language."""
+        return {
+            'title': self.get_title(language),
+            'description': self.get_description(language),
+        }
