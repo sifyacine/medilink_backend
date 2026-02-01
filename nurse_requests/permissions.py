@@ -26,8 +26,8 @@ class IsNurse(permissions.BasePermission):
         return (
             request.user and
             request.user.is_authenticated and
-            hasattr(request.user, 'provider') and
-            request.user.provider.provider_type == 'NURSE'
+            hasattr(request.user, 'provider_profile') and
+            request.user.provider_profile.provider_type == 'NURSE'
         )
 
 
