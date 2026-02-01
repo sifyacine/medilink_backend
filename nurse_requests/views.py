@@ -874,7 +874,7 @@ class NurseAvailableRequestsViewSet(viewsets.ReadOnlyModelViewSet):
             status__in=[RequestStatus.SEARCHING, RequestStatus.NURSE_RESPONDED],
             service_id__in=nurse_service_ids  # Only services the nurse offers
         ).exclude(
-            offers__nurse=nurse  # Exclude requests nurse already responded to
+            offers__nurse=nurse.provider  # Exclude requests nurse already responded to (NurseOffer.nurse is FK to Provider)
         ).select_related(
             'service', 'patient_user'
         ).order_by('-created_at')
@@ -1004,7 +1004,7 @@ class NurseAvailableRequestsViewSet(viewsets.ReadOnlyModelViewSet):
             )
         
         # Check if already responded
-        if NurseOffer.objects.filter(request=request_obj, nurse=nurse).exists():
+        if NurseOffer.objects.filter(request=request_obj, nurse=nurse.provider).exists():
             return error_response(
                 ErrorCodes.OFFER_ALREADY_SUBMITTED,
                 'You have already submitted an offer for this request'
@@ -1230,7 +1230,7 @@ class NurseMyOffersViewSet(viewsets.ReadOnlyModelViewSet):
             return NurseServiceRequest.objects.none()
         
         return NurseServiceRequest.objects.filter(
-            offers__nurse=nurse
+            offers__nurse=nurse.provider  # NurseOffer.nurse is FK to Provider
         ).select_related(
             'service', 'patient_user', 'accepted_nurse__user'
         ).prefetch_related(
@@ -1255,8 +1255,8 @@ class NurseMyOffersViewSet(viewsets.ReadOnlyModelViewSet):
         from django.db.models import Count
         stats = {
             'total_offers': queryset.count(),
-            'pending': queryset.filter(offers__nurse=nurse, offers__status=OfferStatus.PENDING).distinct().count(),
-            'accepted': queryset.filter(accepted_nurse=nurse).count(),
+            'pending': queryset.filter(offers__nurse=nurse.provider, offers__status=OfferStatus.PENDING).distinct().count(),
+            'accepted': queryset.filter(accepted_nurse=nurse.provider).count(),
         }
         
         return Response({

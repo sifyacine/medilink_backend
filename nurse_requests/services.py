@@ -83,20 +83,21 @@ class NurseRequestService:
     def nurse_accept_request(request_obj, nurse, **offer_data):
         """
         Nurse accepts the request at the patient's offered price.
+        nurse: Nurse model instance
         """
-        # Check if nurse already has an offer
+        # Check if nurse already has an offer (NurseOffer.nurse is FK to Provider)
         existing_offer = NurseOffer.objects.filter(
             request=request_obj,
-            nurse=nurse
+            nurse=nurse.provider
         ).first()
         
         if existing_offer:
             raise ValueError("You have already responded to this request")
         
-        # Create offer at patient's price
+        # Create offer at patient's price (NurseOffer.nurse is FK to Provider)
         offer = NurseOffer.objects.create(
             request=request_obj,
-            nurse=nurse,
+            nurse=nurse.provider,
             offered_price=request_obj.patient_offered_price,
             status=OfferStatus.PENDING,
             **offer_data
@@ -107,14 +108,14 @@ class NurseRequestService:
             request_obj.status = RequestStatus.NURSE_RESPONDED
             request_obj.save()
         
-        # Log action
+        # Log action (Nurse.provider.user is the User instance)
         RequestHistory.objects.create(
             request=request_obj,
-            actor=nurse.user,
+            actor=nurse.provider.user,
             action='NURSE_ACCEPTED',
             details={
                 'nurse_id': nurse.id,
-                'nurse_name': f"{nurse.user.first_name} {nurse.user.last_name}",
+                'nurse_name': f"{nurse.first_name} {nurse.last_name}".strip() or nurse.provider.user.email,
                 'offered_price': str(offer.offered_price)
             }
         )
@@ -126,20 +127,21 @@ class NurseRequestService:
     def nurse_counter_offer(request_obj, nurse, offered_price, **offer_data):
         """
         Nurse makes a counter offer with a higher price.
+        nurse: Nurse model instance
         """
-        # Check if nurse already has an offer
+        # Check if nurse already has an offer (NurseOffer.nurse is FK to Provider)
         existing_offer = NurseOffer.objects.filter(
             request=request_obj,
-            nurse=nurse
+            nurse=nurse.provider
         ).first()
         
         if existing_offer:
             raise ValueError("You have already responded to this request")
         
-        # Create counter offer
+        # Create counter offer (NurseOffer.nurse is FK to Provider)
         offer = NurseOffer.objects.create(
             request=request_obj,
-            nurse=nurse,
+            nurse=nurse.provider,
             offered_price=offered_price,
             status=OfferStatus.COUNTER_OFFERED,
             **offer_data
@@ -150,14 +152,14 @@ class NurseRequestService:
             request_obj.status = RequestStatus.NURSE_RESPONDED
             request_obj.save()
         
-        # Log action
+        # Log action (Nurse.provider.user is the User instance)
         RequestHistory.objects.create(
             request=request_obj,
-            actor=nurse.user,
+            actor=nurse.provider.user,
             action='NURSE_COUNTER_OFFERED',
             details={
                 'nurse_id': nurse.id,
-                'nurse_name': f"{nurse.user.first_name} {nurse.user.last_name}",
+                'nurse_name': f"{nurse.first_name} {nurse.last_name}".strip() or nurse.provider.user.email,
                 'offered_price': str(offer.offered_price),
                 'patient_price': str(request_obj.patient_offered_price)
             }
@@ -171,14 +173,14 @@ class NurseRequestService:
         """
         Nurse rejects the request.
         """
-        # Log rejection
+        # Log rejection (Nurse.provider.user is the User instance)
         RequestHistory.objects.create(
             request=request_obj,
-            actor=nurse.user,
+            actor=nurse.provider.user,
             action='NURSE_REJECTED',
             details={
                 'nurse_id': nurse.id,
-                'nurse_name': f"{nurse.user.first_name} {nurse.user.last_name}",
+                'nurse_name': f"{nurse.first_name} {nurse.last_name}".strip() or nurse.provider.user.email,
                 'reason': reason
             }
         )
