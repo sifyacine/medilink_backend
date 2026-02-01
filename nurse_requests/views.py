@@ -26,7 +26,10 @@ from .serializers import (
     NurseCounterOfferSerializer,
     NurseProfileServiceSerializer,
     PatientSavedAddressSerializer,
+    NurseProfileDetailSerializer,
+    NurseReviewHistorySerializer,
 )
+from providers.models import Provider, Nurse
 from .permissions import IsPatient, IsNurse, IsRequestOwner
 from .services import NurseRequestService
 from .signals import request_created, request_status_changed
@@ -597,6 +600,108 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
                 ErrorCodes.REQUEST_INVALID_STATUS,
                 str(e)
             )
+    
+    @action(detail=True, methods=['get'], url_path='nurse-profile/(?P<nurse_id>[^/.]+)')
+    def nurse_profile(self, request, pk=None, nurse_id=None):
+        """
+        Get detailed profile of a nurse who made an offer.
+        Allows patients to review nurse credentials before accepting.
+        
+        GET /patient/nurse-requests/{request_id}/nurse-profile/{nurse_id}/
+        """
+        try:
+            request_obj = self.get_object()
+        except Exception:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_FOUND,
+                'Request not found',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify the nurse has made an offer on this request
+        try:
+            offer = NurseOffer.objects.get(
+                request=request_obj,
+                nurse_id=nurse_id
+            )
+        except NurseOffer.DoesNotExist:
+            return error_response(
+                ErrorCodes.OFFER_NOT_FOUND,
+                'This nurse has not made an offer on this request',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get the nurse profile
+        try:
+            nurse = Nurse.objects.get(provider_id=nurse_id)
+        except Nurse.DoesNotExist:
+            return error_response(
+                ErrorCodes.NURSE_PROFILE_NOT_FOUND,
+                'Nurse profile not found',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = NurseProfileDetailSerializer(nurse, context={'request': request})
+        
+        return Response({
+            'success': True,
+            'data': serializer.data,
+            'offer': {
+                'id': offer.id,
+                'offered_price': str(offer.offered_price),
+                'status': offer.status,
+                'estimated_arrival_time': str(offer.estimated_arrival_time) if offer.estimated_arrival_time else None,
+                'notes': offer.notes,
+            },
+            'message': 'Nurse profile retrieved successfully'
+        })
+    
+    @action(detail=True, methods=['get'], url_path='nurse-history/(?P<nurse_id>[^/.]+)')
+    def nurse_history(self, request, pk=None, nurse_id=None):
+        """
+        Get a nurse's completed service history.
+        Shows recent completed services with anonymized patient info.
+        
+        GET /patient/nurse-requests/{request_id}/nurse-history/{nurse_id}/
+        """
+        try:
+            request_obj = self.get_object()
+        except Exception:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_FOUND,
+                'Request not found',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify the nurse has made an offer
+        if not NurseOffer.objects.filter(
+            request=request_obj,
+            nurse_id=nurse_id
+        ).exists():
+            return error_response(
+                ErrorCodes.OFFER_NOT_FOUND,
+                'This nurse has not made an offer on this request',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get completed services for this nurse
+        completed_services = NurseServiceRequest.objects.filter(
+            accepted_nurse_id=nurse_id,
+            status=RequestStatus.COMPLETED
+        ).select_related('service').order_by('-completed_at')[:10]
+        
+        serializer = NurseReviewHistorySerializer(
+            completed_services,
+            many=True,
+            context={'request': request}
+        )
+        
+        return Response({
+            'success': True,
+            'count': completed_services.count(),
+            'results': serializer.data,
+            'message': 'Nurse service history retrieved'
+        })
 
 
 # =============================================================================

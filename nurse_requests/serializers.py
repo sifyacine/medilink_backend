@@ -46,32 +46,94 @@ class NurseOfferSerializer(serializers.ModelSerializer):
     """Serializer for nurse offers with nurse details"""
     nurse_name = serializers.SerializerMethodField()
     nurse_rating = serializers.SerializerMethodField()
+    nurse_review_count = serializers.SerializerMethodField()
     nurse_profile_image = serializers.SerializerMethodField()
     nurse_id = serializers.IntegerField(source='nurse.id', read_only=True)
+    nurse_years_experience = serializers.SerializerMethodField()
+    nurse_completed_services = serializers.SerializerMethodField()
+    nurse_biography = serializers.SerializerMethodField()
+    nurse_is_verified = serializers.SerializerMethodField()
     
     class Meta:
         model = NurseOffer
         fields = [
-            'id', 'nurse_id', 'nurse_name', 'nurse_rating',
-            'nurse_profile_image', 'offered_price', 'status',
+            'id', 'nurse_id', 'nurse_name', 'nurse_rating', 'nurse_review_count',
+            'nurse_profile_image', 'nurse_years_experience', 'nurse_completed_services',
+            'nurse_biography', 'nurse_is_verified',
+            'offered_price', 'status',
             'estimated_arrival_time', 'distance_km', 'notes',
             'created_at', 'responded_at'
         ]
         read_only_fields = [
-            'id', 'nurse_id', 'nurse_name', 'nurse_rating',
-            'nurse_profile_image', 'created_at', 'responded_at'
+            'id', 'nurse_id', 'nurse_name', 'nurse_rating', 'nurse_review_count',
+            'nurse_profile_image', 'nurse_years_experience', 'nurse_completed_services',
+            'nurse_biography', 'nurse_is_verified', 'created_at', 'responded_at'
         ]
     
     def get_nurse_name(self, obj):
-        return f"{obj.nurse.user.first_name} {obj.nurse.user.last_name}".strip()
+        """Get nurse full name."""
+        if hasattr(obj.nurse, 'nurse_profile'):
+            nurse = obj.nurse.nurse_profile
+            name = f"{nurse.first_name} {nurse.last_name}".strip()
+            if name:
+                return name
+        return obj.nurse.user.email.split('@')[0]
     
     def get_nurse_rating(self, obj):
-        # TODO: Implement rating system
-        return 4.5  # Placeholder
+        """Get nurse average rating from reviews system."""
+        try:
+            from reviews.models import get_review_aggregate
+            aggregate = get_review_aggregate(obj.nurse)
+            return float(aggregate.average_rating)
+        except Exception:
+            return 0.0
+    
+    def get_nurse_review_count(self, obj):
+        """Get total number of reviews for this nurse."""
+        try:
+            from reviews.models import get_review_aggregate
+            aggregate = get_review_aggregate(obj.nurse)
+            return aggregate.review_count
+        except Exception:
+            return 0
     
     def get_nurse_profile_image(self, obj):
-        # TODO: Return actual profile image URL
+        """Return actual profile image URL."""
+        if hasattr(obj.nurse, 'nurse_profile') and obj.nurse.nurse_profile.profile_image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.nurse.nurse_profile.profile_image.url)
+            return obj.nurse.nurse_profile.profile_image.url
         return None
+    
+    def get_nurse_years_experience(self, obj):
+        """Get nurse years of experience."""
+        if hasattr(obj.nurse, 'nurse_profile'):
+            return obj.nurse.nurse_profile.years_of_experience
+        return None
+    
+    def get_nurse_completed_services(self, obj):
+        """Count completed nurse service requests."""
+        from nurse_requests.models import NurseServiceRequest, RequestStatus
+        return NurseServiceRequest.objects.filter(
+            accepted_nurse=obj.nurse,
+            status=RequestStatus.COMPLETED
+        ).count()
+    
+    def get_nurse_biography(self, obj):
+        """Get nurse biography snippet."""
+        if hasattr(obj.nurse, 'nurse_profile'):
+            bio = obj.nurse.nurse_profile.biography or ''
+            if len(bio) > 150:
+                return bio[:150] + '...'
+            return bio
+        return ''
+    
+    def get_nurse_is_verified(self, obj):
+        """Check if nurse is verified."""
+        if hasattr(obj.nurse, 'nurse_profile'):
+            return obj.nurse.nurse_profile.is_verified
+        return False
 
 
 class NurseServiceRequestListSerializer(serializers.ModelSerializer):
@@ -103,18 +165,22 @@ class NurseServiceRequestDetailSerializer(serializers.ModelSerializer):
     offers = NurseOfferSerializer(many=True, read_only=True)
     patient_name = serializers.SerializerMethodField()
     accepted_nurse_name = serializers.SerializerMethodField()
+    accepted_nurse_profile = serializers.SerializerMethodField()
+    address_details = serializers.SerializerMethodField()
+    can_leave_review = serializers.SerializerMethodField()
     
     class Meta:
         model = NurseServiceRequest
         fields = [
             'id', 'patient_user', 'patient_record', 'patient_name', 'service',
-            'accepted_nurse', 'accepted_nurse_name',
+            'accepted_nurse', 'accepted_nurse_name', 'accepted_nurse_profile',
             'base_price', 'patient_offered_price', 'final_price',
-            'latitude', 'longitude', 'city', 'address_line',
+            'address', 'address_details',
+            'latitude', 'longitude', 'city', 'state', 'address_line', 'country',
             'status', 'notes', 'offers',
             'created_at', 'updated_at', 'accepted_at',
             'started_at', 'completed_at', 'cancelled_at',
-            'cancellation_reason'
+            'cancellation_reason', 'can_leave_review'
         ]
         read_only_fields = [
             'id', 'patient_user', 'patient_record', 'base_price', 'accepted_nurse',
@@ -127,9 +193,83 @@ class NurseServiceRequestDetailSerializer(serializers.ModelSerializer):
         return obj.get_patient_display_name()
     
     def get_accepted_nurse_name(self, obj):
-        if obj.accepted_nurse:
-            return f"{obj.accepted_nurse.user.first_name} {obj.accepted_nurse.user.last_name}".strip()
+        if obj.accepted_nurse and hasattr(obj.accepted_nurse, 'nurse_profile'):
+            nurse = obj.accepted_nurse.nurse_profile
+            return f"{nurse.first_name} {nurse.last_name}".strip()
         return None
+    
+    def get_accepted_nurse_profile(self, obj):
+        """Get summary of accepted nurse for quick display."""
+        if not obj.accepted_nurse:
+            return None
+        
+        nurse = obj.accepted_nurse
+        profile = {}
+        
+        if hasattr(nurse, 'nurse_profile'):
+            np = nurse.nurse_profile
+            profile['first_name'] = np.first_name
+            profile['last_name'] = np.last_name
+            profile['phone_number'] = np.phone_number
+            if np.profile_image:
+                request = self.context.get('request')
+                if request:
+                    profile['profile_image'] = request.build_absolute_uri(np.profile_image.url)
+                else:
+                    profile['profile_image'] = np.profile_image.url
+        
+        # Get rating
+        try:
+            from reviews.models import get_review_aggregate
+            aggregate = get_review_aggregate(nurse)
+            profile['average_rating'] = float(aggregate.average_rating)
+            profile['review_count'] = aggregate.review_count
+        except Exception:
+            profile['average_rating'] = 0.0
+            profile['review_count'] = 0
+        
+        return profile
+    
+    def get_address_details(self, obj):
+        """Get linked address details if available."""
+        if obj.address:
+            return {
+                'id': obj.address.id,
+                'street': obj.address.street,
+                'city': obj.address.city,
+                'state': obj.address.state,
+                'zip_code': obj.address.zip_code,
+                'country': obj.address.country,
+                'latitude': str(obj.address.latitude) if obj.address.latitude else None,
+                'longitude': str(obj.address.longitude) if obj.address.longitude else None,
+                'address_type': obj.address.address_type,
+            }
+        return None
+    
+    def get_can_leave_review(self, obj):
+        """Check if patient can leave a review (completed & not reviewed yet)."""
+        if obj.status != RequestStatus.COMPLETED or not obj.accepted_nurse:
+            return False
+        
+        try:
+            from reviews.models import Review, ReviewStatus
+            from django.contrib.contenttypes.models import ContentType
+            
+            # Check if review already exists for this request context
+            request_ct = ContentType.objects.get_for_model(obj)
+            provider_ct = ContentType.objects.get_for_model(obj.accepted_nurse)
+            
+            exists = Review.objects.filter(
+                reviewed_content_type=provider_ct,
+                reviewed_object_id=str(obj.accepted_nurse.id),
+                context_content_type=request_ct,
+                context_object_id=str(obj.id),
+                status=ReviewStatus.ACTIVE
+            ).exists()
+            
+            return not exists
+        except Exception:
+            return False
 
 
 class CreateNurseServiceRequestSerializer(serializers.ModelSerializer):
@@ -355,3 +495,156 @@ class PatientSavedAddressSerializer(serializers.Serializer):
     def get_has_coordinates(self, obj):
         """Check if address has valid coordinates for map selection"""
         return bool(obj.latitude and obj.longitude)
+
+
+# =============================================================================
+# NURSE PROFILE DETAIL SERIALIZER (for patient to view before selection)
+# =============================================================================
+
+class NurseProfileDetailSerializer(serializers.Serializer):
+    """
+    Comprehensive serializer for viewing a nurse's full profile.
+    Used when patients want to see detailed nurse info before selection.
+    """
+    # Basic info
+    id = serializers.IntegerField(source='provider.id', read_only=True)
+    first_name = serializers.CharField(read_only=True)
+    last_name = serializers.CharField(read_only=True)
+    full_name = serializers.SerializerMethodField()
+    profile_image = serializers.ImageField(read_only=True)
+    biography = serializers.CharField(read_only=True)
+    
+    # Professional info
+    license_number = serializers.CharField(read_only=True)
+    certification = serializers.CharField(read_only=True)
+    years_of_experience = serializers.IntegerField(read_only=True)
+    is_verified = serializers.BooleanField(read_only=True)
+    is_available = serializers.BooleanField(read_only=True)
+    is_home_service_available = serializers.BooleanField(read_only=True)
+    
+    # Ratings & Reviews (from reviews app)
+    average_rating = serializers.SerializerMethodField()
+    review_count = serializers.SerializerMethodField()
+    rating_distribution = serializers.SerializerMethodField()
+    recent_reviews = serializers.SerializerMethodField()
+    
+    # Service history
+    completed_services_count = serializers.SerializerMethodField()
+    services_offered = serializers.SerializerMethodField()
+    
+    def get_full_name(self, obj):
+        """Get formatted full name."""
+        return f"{obj.first_name} {obj.last_name}".strip() or "Nurse"
+    
+    def get_average_rating(self, obj):
+        """Get average rating from reviews system."""
+        try:
+            from reviews.models import get_review_aggregate
+            aggregate = get_review_aggregate(obj.provider)
+            return float(aggregate.average_rating)
+        except Exception:
+            return 0.0
+    
+    def get_review_count(self, obj):
+        """Get total review count."""
+        try:
+            from reviews.models import get_review_aggregate
+            aggregate = get_review_aggregate(obj.provider)
+            return aggregate.review_count
+        except Exception:
+            return 0
+    
+    def get_rating_distribution(self, obj):
+        """Get rating distribution."""
+        try:
+            from reviews.models import get_review_aggregate
+            aggregate = get_review_aggregate(obj.provider)
+            return {
+                1: aggregate.rating_1_count,
+                2: aggregate.rating_2_count,
+                3: aggregate.rating_3_count,
+                4: aggregate.rating_4_count,
+                5: aggregate.rating_5_count,
+            }
+        except Exception:
+            return {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+    
+    def get_recent_reviews(self, obj):
+        """Get recent reviews for this nurse."""
+        try:
+            from reviews.models import get_reviews_for_object
+            reviews = get_reviews_for_object(obj.provider)[:5]
+            return [{
+                'id': str(review.id),
+                'rating': review.rating,
+                'text': review.text[:200] if review.text else '',
+                'created_at': review.created_at.isoformat(),
+                'has_response': bool(review.response),
+            } for review in reviews]
+        except Exception:
+            return []
+    
+    def get_completed_services_count(self, obj):
+        """Count completed nurse service requests."""
+        from nurse_requests.models import NurseServiceRequest, RequestStatus
+        return NurseServiceRequest.objects.filter(
+            accepted_nurse=obj.provider,
+            status=RequestStatus.COMPLETED
+        ).count()
+    
+    def get_services_offered(self, obj):
+        """Get list of services this nurse offers."""
+        try:
+            from services.models import NurseService
+            nurse_services = NurseService.objects.filter(
+                nurse=obj,
+                is_available=True
+            ).select_related('service')[:10]
+            return [{
+                'id': ns.service.id,
+                'title': ns.service.title,
+                'price': str(ns.custom_price or ns.service.price),
+                'duration_minutes': ns.service.duration_minutes,
+            } for ns in nurse_services]
+        except Exception:
+            return []
+
+
+class NurseReviewHistorySerializer(serializers.Serializer):
+    """Serializer for nurse's review history (completed services)."""
+    id = serializers.IntegerField(read_only=True)
+    service_title = serializers.CharField(source='service.title', read_only=True)
+    patient_name = serializers.SerializerMethodField()
+    completed_at = serializers.DateTimeField(read_only=True)
+    final_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    review = serializers.SerializerMethodField()
+    
+    def get_patient_name(self, obj):
+        """Get anonymized patient name."""
+        name = obj.get_patient_display_name()
+        if name and len(name) > 2:
+            return f"{name[0]}***{name[-1]}"
+        return "Patient"
+    
+    def get_review(self, obj):
+        """Get review for this service if exists."""
+        try:
+            from reviews.models import Review, ReviewStatus
+            from django.contrib.contenttypes.models import ContentType
+            
+            # Look for review with this request as context
+            request_ct = ContentType.objects.get_for_model(obj)
+            review = Review.objects.filter(
+                context_content_type=request_ct,
+                context_object_id=str(obj.id),
+                status=ReviewStatus.ACTIVE
+            ).first()
+            
+            if review:
+                return {
+                    'rating': review.rating,
+                    'text': review.text[:100] if review.text else '',
+                }
+        except Exception:
+            pass
+        return None

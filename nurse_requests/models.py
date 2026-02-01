@@ -92,11 +92,23 @@ class NurseServiceRequest(models.Model):
         help_text=_("Final agreed price after acceptance")
     )
 
-    # Location
+    # Location - Address Integration
+    # Option 1: Direct address reference (preferred when patient has saved address)
+    address = models.ForeignKey(
+        'address.Address',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='nurse_service_requests',
+        help_text=_("Link to patient's saved address")
+    )
+    # Option 2: Inline location data (for one-time locations)
     latitude = models.DecimalField(max_digits=9, decimal_places=6)
     longitude = models.DecimalField(max_digits=9, decimal_places=6)
     city = models.CharField(max_length=100)
+    state = models.CharField(max_length=100, blank=True)
     address_line = models.CharField(max_length=500, blank=True)
+    country = models.CharField(max_length=100, default='Algeria')
 
     # Status and metadata
     status = models.CharField(

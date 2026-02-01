@@ -45,6 +45,12 @@ urlpatterns = [
     # On-demand nursing service endpoints
     path('api/nurse-requests/', include('nurse_requests.urls')),
     
+    # Reviews and ratings endpoints
+    path('api/reviews/', include('reviews.urls')),
+    
+    # Reports and moderation endpoints
+    path('api/reports/', include('reports.urls')),
+    
     # django-allauth URLs (for email verification pages if needed)
     path('accounts/', include('allauth.urls')),
 ]

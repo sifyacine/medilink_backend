@@ -103,6 +103,36 @@ class Doctor(models.Model):
         help_text='Whether doctor provides home visits'
     )
     
+    # ==========================================================================
+    # CONSULTATION PRICING
+    # ==========================================================================
+    consultation_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Standard consultation price (clinic visit)'
+    )
+    home_visit_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Home visit consultation price'
+    )
+    online_consultation_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Online/video consultation price'
+    )
+    currency = models.CharField(
+        max_length=3,
+        default='DZD',
+        help_text='Currency for prices (default: Algerian Dinar)'
+    )
+    
     # Timestamps
     created_at = models.DateTimeField(
         default=timezone.now,

@@ -82,6 +82,8 @@ INSTALLED_APPS = [
     'appointments',  # Appointment scheduling
     'prescriptions',  # Prescription management
     'nurse_requests',  # On-demand nursing services
+    'reviews',  # Universal reviews and ratings system
+    'reports',  # Universal reporting and moderation system
 ]
 
 SITE_ID = 1

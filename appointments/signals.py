@@ -2,6 +2,7 @@
 Signals for the appointments app.
 
 Creates notifications when appointment events occur.
+Automatically adds patients to provider's patient list on confirmation.
 """
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
@@ -116,6 +117,9 @@ def _notify_status_change(appointment, old_status, new_status):
                 priority=NotificationPriority.HIGH,
                 action_url=f'/appointments/{appointment.pk}'
             )
+        
+        # IMPORTANT: Add patient to provider's patient list on confirmation
+        _add_patient_to_provider_list(appointment)
     
     elif new_status == AppointmentStatus.CANCELLED:
         cancelled_by = appointment.cancelled_by
@@ -201,3 +205,64 @@ def _notify_status_change(appointment, old_status, new_status):
                 priority=NotificationPriority.HIGH,
                 action_url=f'/appointments/{appointment.pk}'
             )
+        
+        # IMPORTANT: Add patient to provider's patient list on reschedule (if not already)
+        _add_patient_to_provider_list(appointment)
+
+
+def _add_patient_to_provider_list(appointment):
+    """
+    Automatically add patient to provider's patient list when appointment is confirmed/rescheduled.
+    
+    This establishes a doctor-patient relationship:
+    - Creates a PatientRecord if patient only has User account
+    - Creates ProviderPatientAccess record for the relationship
+    - Prevents duplicates
+    """
+    from patients.models import PatientRecord, ProviderPatientAccess
+    from django.utils import timezone
+    
+    provider = appointment.provider
+    
+    # Case 1: Patient has a PatientRecord
+    if appointment.patient_record:
+        patient_record = appointment.patient_record
+    # Case 2: Patient has a User account but no PatientRecord linked
+    elif appointment.patient_user:
+        # Check if user already has a linked patient record
+        try:
+            patient_record = PatientRecord.objects.get(linked_user=appointment.patient_user)
+        except PatientRecord.DoesNotExist:
+            # Create a patient record for this user
+            user = appointment.patient_user
+            patient_record = PatientRecord.objects.create(
+                linked_user=user,
+                first_name=user.get_full_name().split()[0] if user.get_full_name() else user.email.split('@')[0],
+                last_name=user.get_full_name().split()[-1] if user.get_full_name() and len(user.get_full_name().split()) > 1 else '',
+                date_of_birth=timezone.now().date(),  # Placeholder - should be updated by patient
+                gender='PREFER_NOT_TO_SAY',
+                phone_number='',
+                email=user.email,
+            )
+    else:
+        # No patient identification - cannot create access
+        return
+    
+    # Create or update provider-patient access
+    access, created = ProviderPatientAccess.objects.get_or_create(
+        provider=provider,
+        patient_record=patient_record,
+        defaults={
+            'access_level': 'FULL',
+            'granted_by': provider,  # Self-granted via appointment
+        }
+    )
+    
+    if created:
+        # Log this for audit purposes
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(
+            f"Patient {patient_record.patient_unique_id} added to provider "
+            f"{provider.id}'s patient list via appointment {appointment.pk}"
+        )
