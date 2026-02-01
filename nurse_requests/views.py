@@ -620,7 +620,7 @@ class NurseProfileServicesViewSet(viewsets.ViewSet):
         """Get the nurse profile for the current user"""
         from providers.models import Nurse
         try:
-            provider = request.user.provider
+            provider = request.user.provider_profile
             return provider.nurse_profile
         except Exception:
             return None
@@ -843,7 +843,7 @@ class NurseAvailableRequestsViewSet(viewsets.ReadOnlyModelViewSet):
         """Get the nurse profile for the current user"""
         from providers.models import Nurse
         try:
-            provider = request.user.provider
+            provider = request.user.provider_profile
             return provider.nurse_profile
         except Exception:
             return None
@@ -1217,7 +1217,7 @@ class NurseMyOffersViewSet(viewsets.ReadOnlyModelViewSet):
         """Get the nurse profile for the current user"""
         from providers.models import Nurse
         try:
-            provider = request.user.provider
+            provider = request.user.provider_profile
             return provider.nurse_profile
         except Exception:
             return None
