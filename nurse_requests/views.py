@@ -180,14 +180,44 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsPatient]
     
     def get_queryset(self):
-        """Return only the current patient's requests"""
-        return NurseServiceRequest.objects.filter(
+        """
+        Return all the current patient's requests (full history).
+        
+        Query Parameters:
+        - status: Filter by specific status (e.g., COMPLETED, CANCELLED, SEARCHING)
+        - is_active: Filter active requests (SEARCHING, NURSE_RESPONDED, PATIENT_DECISION, ACCEPTED, IN_PROGRESS)
+        - is_history: Filter historical requests (COMPLETED, CANCELLED)
+        """
+        queryset = NurseServiceRequest.objects.filter(
             patient_user=self.request.user
         ).select_related(
             'service', 'patient_user', 'patient_record', 'accepted_nurse__user'
         ).prefetch_related(
             'offers__nurse__user'
-        )
+        ).order_by('-created_at')
+        
+        # Filter by specific status
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter.upper())
+        
+        # Filter active vs historical
+        is_active = self.request.query_params.get('is_active')
+        is_history = self.request.query_params.get('is_history')
+        
+        active_statuses = [
+            RequestStatus.CREATED, RequestStatus.SEARCHING, 
+            RequestStatus.NURSE_RESPONDED, RequestStatus.PATIENT_DECISION,
+            RequestStatus.ACCEPTED, RequestStatus.IN_PROGRESS
+        ]
+        history_statuses = [RequestStatus.COMPLETED, RequestStatus.CANCELLED]
+        
+        if is_active and is_active.lower() == 'true':
+            queryset = queryset.filter(status__in=active_statuses)
+        elif is_history and is_history.lower() == 'true':
+            queryset = queryset.filter(status__in=history_statuses)
+        
+        return queryset
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
@@ -1328,19 +1358,65 @@ class NurseMyOffersViewSet(viewsets.ReadOnlyModelViewSet):
             return None
     
     def get_queryset(self):
-        """Return requests where nurse has submitted an offer"""
+        """
+        Return all requests where nurse has submitted an offer (full history).
+        
+        This includes:
+        - Requests where nurse offer was accepted
+        - Requests where nurse offer was rejected (patient chose another nurse)
+        - Requests where nurse counter-offered but patient rejected
+        - Requests where patient cancelled after nurse submitted offer
+        - All pending offers
+        
+        Query Parameters:
+        - status: Filter by request status (e.g., COMPLETED, CANCELLED)
+        - offer_status: Filter by nurse's offer status (PENDING, ACCEPTED, REJECTED)
+        - is_active: Filter active requests only
+        - is_history: Filter historical requests only (COMPLETED, CANCELLED)
+        """
         nurse = self._get_nurse(self.request)
         
         if not nurse:
             return NurseServiceRequest.objects.none()
         
-        return NurseServiceRequest.objects.filter(
+        queryset = NurseServiceRequest.objects.filter(
             offers__nurse=nurse.provider  # NurseOffer.nurse is FK to Provider
         ).select_related(
             'service', 'patient_user', 'accepted_nurse__user'
         ).prefetch_related(
             'offers__nurse__user'
         ).distinct().order_by('-created_at')
+        
+        # Filter by request status
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter.upper())
+        
+        # Filter by nurse's offer status
+        offer_status = self.request.query_params.get('offer_status')
+        if offer_status:
+            queryset = queryset.filter(
+                offers__nurse=nurse.provider,
+                offers__status=offer_status.upper()
+            )
+        
+        # Filter active vs historical
+        is_active = self.request.query_params.get('is_active')
+        is_history = self.request.query_params.get('is_history')
+        
+        active_statuses = [
+            RequestStatus.CREATED, RequestStatus.SEARCHING, 
+            RequestStatus.NURSE_RESPONDED, RequestStatus.PATIENT_DECISION,
+            RequestStatus.ACCEPTED, RequestStatus.IN_PROGRESS
+        ]
+        history_statuses = [RequestStatus.COMPLETED, RequestStatus.CANCELLED]
+        
+        if is_active and is_active.lower() == 'true':
+            queryset = queryset.filter(status__in=active_statuses)
+        elif is_history and is_history.lower() == 'true':
+            queryset = queryset.filter(status__in=history_statuses)
+        
+        return queryset
     
     def list(self, request, *args, **kwargs):
         """List nurse's offers with summary"""
