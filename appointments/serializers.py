@@ -208,7 +208,16 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
     Can be used by:
     - Patients: Must specify provider, can optionally specify service
     - Providers: Must specify patient_user OR patient_record
+    
+    Notes:
+    - scheduled_time is optional (providers manage their own schedules)
+    - duration_minutes is optional (defaults to 30 if not provided)
+    - For online appointments, meeting_link can be added later by provider
     """
+    # Make these explicitly optional
+    scheduled_time = serializers.TimeField(required=False, allow_null=True)
+    duration_minutes = serializers.IntegerField(required=False, allow_null=True, min_value=5)
+    
     class Meta:
         model = Appointment
         fields = [
@@ -255,15 +264,23 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
         scheduled_date = attrs.get('scheduled_date')
         scheduled_time = attrs.get('scheduled_time')
         
-        if scheduled_date and scheduled_time:
-            appointment_datetime = timezone.datetime.combine(scheduled_date, scheduled_time)
-            if timezone.is_naive(appointment_datetime):
-                appointment_datetime = timezone.make_aware(appointment_datetime)
-            
-            if appointment_datetime < timezone.now():
+        # Validate date is not in the past
+        if scheduled_date:
+            if scheduled_date < timezone.now().date():
                 raise serializers.ValidationError({
                     'scheduled_date': 'Appointment cannot be scheduled in the past.'
                 })
+            
+            # If time is provided, validate full datetime
+            if scheduled_time:
+                appointment_datetime = timezone.datetime.combine(scheduled_date, scheduled_time)
+                if timezone.is_naive(appointment_datetime):
+                    appointment_datetime = timezone.make_aware(appointment_datetime)
+                
+                if appointment_datetime < timezone.now():
+                    raise serializers.ValidationError({
+                        'scheduled_date': 'Appointment cannot be scheduled in the past.'
+                    })
         
         # Validate location-specific requirements
         location_type = attrs.get('location_type', AppointmentLocationType.CLINIC)
@@ -273,20 +290,41 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
                 'home_address': 'Home address is required for home visit appointments.'
             })
         
-        # Validate provider availability and check for double-booking
-        duration_minutes = attrs.get('duration_minutes', 30)
-        is_available, availability_message = SchedulingService.check_provider_available(
-            provider=provider,
-            scheduled_date=scheduled_date,
-            scheduled_time=scheduled_time,
-            duration_minutes=duration_minutes,
-            location_type=location_type
-        )
+        # Check provider's daily appointment limit
+        if provider and scheduled_date:
+            daily_limit = provider.daily_appointment_limit
+            if daily_limit > 0:
+                # Count existing appointments for that day (excluding cancelled/rejected)
+                existing_count = Appointment.objects.filter(
+                    provider=provider,
+                    scheduled_date=scheduled_date,
+                    status__in=[
+                        AppointmentStatus.PENDING,
+                        AppointmentStatus.CONFIRMED,
+                        AppointmentStatus.COMPLETED,
+                    ]
+                ).count()
+                
+                if existing_count >= daily_limit:
+                    raise serializers.ValidationError({
+                        'scheduled_date': f'This provider has reached their daily appointment limit ({daily_limit}) for this date.'
+                    })
         
-        if not is_available:
-            raise serializers.ValidationError({
-                'scheduled_time': availability_message
-            })
+        # Validate provider availability and check for double-booking (only if time is provided)
+        if scheduled_time:
+            duration_minutes = attrs.get('duration_minutes') or 30
+            is_available, availability_message = SchedulingService.check_provider_available(
+                provider=provider,
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time,
+                duration_minutes=duration_minutes,
+                location_type=location_type
+            )
+            
+            if not is_available:
+                raise serializers.ValidationError({
+                    'scheduled_time': availability_message
+                })
         
         return attrs
     
@@ -402,8 +440,26 @@ class AppointmentUpdateSerializer(serializers.ModelSerializer):
 
 
 class AppointmentConfirmSerializer(serializers.Serializer):
-    """Serializer for confirming an appointment."""
+    """
+    Serializer for confirming an appointment.
+    
+    For online appointments, the provider must provide a meeting link.
+    """
     notes = serializers.CharField(required=False, allow_blank=True)
+    meeting_link = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+    
+    def validate(self, attrs):
+        """Validate that meeting_link is provided for online appointments."""
+        appointment = self.context.get('appointment')
+        
+        if appointment and appointment.location_type == AppointmentLocationType.ONLINE:
+            meeting_link = attrs.get('meeting_link') or appointment.meeting_link
+            if not meeting_link:
+                raise serializers.ValidationError({
+                    'meeting_link': 'Meeting link is required for online appointments.'
+                })
+        
+        return attrs
 
 
 class AppointmentCancelSerializer(serializers.Serializer):
@@ -416,8 +472,24 @@ class AppointmentCancelSerializer(serializers.Serializer):
 
 
 class AppointmentCompleteSerializer(serializers.Serializer):
-    """Serializer for completing an appointment."""
+    """
+    Serializer for completing an appointment.
+    
+    For online appointments, meeting_link must have been set before completion.
+    """
     provider_notes = serializers.CharField(required=False, allow_blank=True)
+    
+    def validate(self, attrs):
+        """Validate that meeting_link exists for online appointments."""
+        appointment = self.context.get('appointment')
+        
+        if appointment and appointment.location_type == AppointmentLocationType.ONLINE:
+            if not appointment.meeting_link:
+                raise serializers.ValidationError({
+                    'meeting_link': 'Meeting link must be set before completing an online appointment.'
+                })
+        
+        return attrs
 
 
 class AppointmentReminderSerializer(serializers.ModelSerializer):

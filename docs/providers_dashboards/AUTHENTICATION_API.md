@@ -541,85 +541,166 @@ Retrieve the complete profile based on provider type.
 GET /api/auth/me/
 ```
 
+### Understanding the Response Structure
+
+> **⚠️ IMPORTANT: Name Fields Location**
+>
+> For **providers**, the `first_name` and `last_name` at the **top level** of the response are from the User model and may be empty.
+> The provider's actual name is stored in the **provider-specific profile** object (e.g., `provider_profile.doctor.first_name`).
+>
+> | Field Location | Description |
+> |----------------|-------------|
+> | `first_name`, `last_name` (top-level) | User model fields - often empty for providers |
+> | `provider_profile.doctor.first_name` | Doctor's actual first name |
+> | `provider_profile.doctor.last_name` | Doctor's actual last name |
+> | `provider_profile.doctor.full_name` | Doctor's full name with "Dr." prefix |
+
 ### Doctor Profile Response
 
 ```json
 {
-    "id": 15,
+    "id": 2,
     "email": "doctor@example.com",
     "role": "PROVIDER",
     "role_display": "Provider",
-    "first_name": "Mohamed",
-    "last_name": "Kaddour",
-    "full_name": "Mohamed Kaddour",
-    "phone_number": "+213555123456",
+    "first_name": "",
+    "last_name": "",
+    "full_name": "doctor@example.com",
+    "phone_number": "",
     "account_status": "ACTIVE",
     "account_status_display": "Active",
     "is_active": true,
-    "email_verified": true,
-    "profile_completed": true,
-    "profile_completion_percentage": 90,
-    "last_login": "2026-02-02T09:00:00Z",
-    "created_at": "2026-02-01T10:00:00Z",
-    "updated_at": "2026-02-02T09:30:00Z",
+    "is_staff": false,
+    "email_verified": false,
+    "email_verified_at": null,
+    "profile_completed": false,
+    "profile_completion_percentage": 67,
+    "last_login": "2026-02-02T13:42:18.862154Z",
+    "last_login_ip": "105.103.114.153",
+    "created_at": "2026-01-27T23:06:02.824369Z",
+    "updated_at": "2026-01-29T15:59:55.758438Z",
     "provider_profile": {
-        "id": 10,
         "status": "APPROVED",
-        "status_display": "Approved",
+        "refusal_reason": "",
+        "approved_at": null,
+        "verified_at": null,
         "provider_type": "DOCTOR",
         "provider_type_display": "Doctor",
-        "refusal_reason": null,
-        "verified_at": "2026-02-02T14:00:00Z",
         "doctor": {
-            "id": 5,
+            "id": 1,
+            "email": "doctor@example.com",
             "first_name": "Mohamed",
             "last_name": "Kaddour",
             "full_name": "Dr. Mohamed Kaddour",
             "gender": "MALE",
+            "gender_display": "Male",
+            "date_of_birth": "1985-03-15",
+            "profile_image": "https://dzmedilink.duckdns.org/media/doctors/profiles/photo.jpg",
             "phone_number": "+213555123456",
             "license_number": "MED-2024-12345",
             "years_of_experience": 15,
             "biography": "Board-certified cardiologist with 15 years of experience...",
-            "profile_image": "https://api.example.com/media/doctors/mohamed.jpg",
+            "degree_document": "https://dzmedilink.duckdns.org/media/doctors/documents/degrees/degree.pdf",
+            "is_verified": false,
             "is_available": true,
             "is_home_service_available": false,
             "consultation_price": "3000.00",
+            "home_visit_price": "5000.00",
+            "online_consultation_price": "2000.00",
             "currency": "DZD",
-            "degree_document": "https://api.example.com/media/docs/degree.pdf",
             "specialties": [
                 {
                     "id": 1,
-                    "name": "Cardiology",
-                    "name_ar": "أمراض القلب",
-                    "slug": "cardiology"
+                    "title": "Cardiology",
+                    "title_ar": "أمراض القلب",
+                    "title_fr": "Cardiologie",
+                    "slug": "cardiology",
+                    "is_primary": true,
+                    "years_of_experience": 15
                 }
             ],
-            "created_at": "2026-02-01T10:00:00Z"
+            "services": [
+                {
+                    "id": 1,
+                    "title": "General Consultation",
+                    "slug": "general-consultation",
+                    "description": "Standard medical consultation",
+                    "price": "3000.00",
+                    "custom_price": null,
+                    "final_price": "3000.00",
+                    "duration_minutes": 30,
+                    "is_home_service": false,
+                    "is_available": true
+                }
+            ],
+            "provider_status": {
+                "status": "APPROVED",
+                "refusal_reason": "",
+                "approved_at": null,
+                "verified_at": null,
+                "provider_type": "DOCTOR",
+                "provider_type_display": "Doctor"
+            },
+            "created_at": "2026-01-27T23:06:03.482792Z",
+            "updated_at": "2026-01-29T15:59:55.763761Z"
         }
     },
+    "patient_profile": null,
     "addresses": [
         {
-            "id": 10,
+            "id": 1,
+            "content_type": 15,
+            "content_type_name": "user",
+            "object_id": 2,
             "street": "123 Rue Didouche Mourad",
             "city": "Algiers",
             "state": "Algiers",
             "zip_code": "16000",
             "country": "Algeria",
-            "latitude": "36.7538",
-            "longitude": "3.0588",
+            "latitude": null,
+            "longitude": null,
             "is_primary": true,
-            "address_type": "CLINIC",
-            "notes": "Main practice",
-            "created_at": "2026-02-01T10:30:00Z"
+            "address_type": "HOME",
+            "notes": "",
+            "created_at": "2026-01-28T17:19:59.330245Z",
+            "updated_at": "2026-02-01T17:27:15.014170Z"
         }
     ],
     "provider_type": "DOCTOR",
     "provider_type_display": "Doctor",
     "subtype": "DOCTOR",
-    "subtype_display": "Doctor",
-    "patient_profile": null
+    "subtype_display": "Doctor"
 }
 ```
+
+### Doctor Profile Fields Explained
+
+| Field Path | Type | Description |
+|------------|------|-------------|
+| `id` | integer | User ID |
+| `email` | string | Login email |
+| `role` | string | Always `PROVIDER` for providers |
+| `first_name`, `last_name` | string | **Top-level User fields - typically empty for providers** |
+| `full_name` | string | Falls back to email if name is empty |
+| `account_status` | string | `ACTIVE`, `SUSPENDED`, `DEACTIVATED` |
+| `profile_completion_percentage` | integer | 0-100 completion score |
+| **provider_profile.doctor** | object | **Doctor's actual profile data** |
+| `.first_name`, `.last_name` | string | **Doctor's actual name** |
+| `.full_name` | string | Name with "Dr." prefix |
+| `.gender` | string | `MALE`, `FEMALE`, `OTHER` |
+| `.phone_number` | string | Doctor's contact number |
+| `.license_number` | string | Medical license |
+| `.years_of_experience` | integer | Years practicing |
+| `.biography` | string | Professional bio |
+| `.is_available` | boolean | Accepting appointments |
+| `.is_home_service_available` | boolean | Offers home visits |
+| `.consultation_price` | decimal | Standard clinic consultation price |
+| `.home_visit_price` | decimal | Home visit price |
+| `.online_consultation_price` | decimal | Online/video consultation price |
+| `.currency` | string | Currency code (default: `DZD`) |
+| `.specialties` | array | Doctor's specialties |
+| `.services` | array | Services offered with pricing |
+| `.provider_status` | object | Provider approval status |
 
 ### Clinic Profile Response
 
@@ -629,9 +710,27 @@ GET /api/auth/me/
     "email": "clinic@example.com",
     "role": "PROVIDER",
     "role_display": "Provider",
+    "first_name": "",
+    "last_name": "",
+    "full_name": "clinic@example.com",
+    "phone_number": "",
+    "account_status": "ACTIVE",
+    "account_status_display": "Active",
+    "is_active": true,
+    "is_staff": false,
+    "email_verified": true,
+    "email_verified_at": "2026-02-01T12:00:00Z",
+    "profile_completed": true,
+    "profile_completion_percentage": 85,
+    "last_login": "2026-02-02T09:00:00Z",
+    "last_login_ip": "105.103.114.153",
+    "created_at": "2026-02-01T10:00:00Z",
+    "updated_at": "2026-02-02T09:30:00Z",
     "provider_profile": {
-        "id": 15,
         "status": "APPROVED",
+        "refusal_reason": "",
+        "approved_at": "2026-02-01T14:00:00Z",
+        "verified_at": "2026-02-01T14:00:00Z",
         "provider_type": "CLINIC",
         "provider_type_display": "Clinic",
         "clinic": {
@@ -640,14 +739,15 @@ GET /api/auth/me/
             "phone_number": "+213555123456",
             "license_number": "CLN-2024-12345",
             "description": "Full-service medical clinic offering...",
-            "logo": "https://api.example.com/media/clinics/logo.jpg",
+            "logo": "https://dzmedilink.duckdns.org/media/clinics/logo.jpg",
             "is_available": true,
             "opening_hours": "08:00-18:00",
             "services": ["General Medicine", "Pediatrics", "Cardiology"],
             "created_at": "2026-02-01T10:00:00Z"
         }
     },
-    "addresses": [...],
+    "patient_profile": null,
+    "addresses": [],
     "provider_type": "CLINIC",
     "provider_type_display": "Clinic"
 }

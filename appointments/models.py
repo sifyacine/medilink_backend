@@ -280,12 +280,16 @@ class Appointment(models.Model):
         help_text='Date of the appointment'
     )
     scheduled_time = models.TimeField(
-        help_text='Start time of the appointment'
+        null=True,
+        blank=True,
+        help_text='Start time of the appointment (optional - provider manages their own schedule)'
     )
     duration_minutes = models.PositiveIntegerField(
+        null=True,
+        blank=True,
         default=30,
         validators=[MinValueValidator(5)],
-        help_text='Duration of appointment in minutes'
+        help_text='Duration of appointment in minutes (optional)'
     )
     
     # Location
@@ -474,22 +478,30 @@ class Appointment(models.Model):
         
         # Validate location-specific fields
         if self.location_type == AppointmentLocationType.ONLINE and not self.meeting_link:
-            # Meeting link can be added later
+            # Meeting link can be added later by the provider
             pass
         
         # Validate scheduling (appointment should be in the future for new appointments)
-        if not self.pk:  # New appointment
-            appointment_datetime = timezone.datetime.combine(
-                self.scheduled_date,
-                self.scheduled_time
-            )
-            if timezone.is_naive(appointment_datetime):
-                appointment_datetime = timezone.make_aware(appointment_datetime)
-            
-            if appointment_datetime < timezone.now():
-                raise ValidationError(
-                    'Appointment cannot be scheduled in the past.'
+        if not self.pk and self.scheduled_date:  # New appointment
+            # Only validate datetime if time is provided
+            if self.scheduled_time:
+                appointment_datetime = timezone.datetime.combine(
+                    self.scheduled_date,
+                    self.scheduled_time
                 )
+                if timezone.is_naive(appointment_datetime):
+                    appointment_datetime = timezone.make_aware(appointment_datetime)
+                
+                if appointment_datetime < timezone.now():
+                    raise ValidationError(
+                        'Appointment cannot be scheduled in the past.'
+                    )
+            else:
+                # Just validate date is not in the past
+                if self.scheduled_date < timezone.now().date():
+                    raise ValidationError(
+                        'Appointment cannot be scheduled in the past.'
+                    )
     
     def get_patient_display_name(self):
         """Get display name for the patient using centralized utility."""
@@ -498,7 +510,11 @@ class Appointment(models.Model):
     
     def get_scheduled_datetime(self):
         """Get the full datetime of the appointment."""
-        dt = timezone.datetime.combine(self.scheduled_date, self.scheduled_time)
+        if not self.scheduled_time:
+            # Return start of day if no time specified
+            dt = timezone.datetime.combine(self.scheduled_date, time(0, 0))
+        else:
+            dt = timezone.datetime.combine(self.scheduled_date, self.scheduled_time)
         if timezone.is_naive(dt):
             dt = timezone.make_aware(dt)
         return dt
@@ -506,7 +522,8 @@ class Appointment(models.Model):
     def get_end_datetime(self):
         """Get the end datetime of the appointment."""
         from datetime import timedelta
-        return self.get_scheduled_datetime() + timedelta(minutes=self.duration_minutes)
+        duration = self.duration_minutes or 30  # Default to 30 if not set
+        return self.get_scheduled_datetime() + timedelta(minutes=duration)
     
     def confirm(self, save=True):
         """Confirm the appointment."""

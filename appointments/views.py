@@ -200,14 +200,24 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         Confirm an appointment.
         
         Only the provider can confirm.
+        For online appointments, a meeting_link must be provided.
         """
         appointment = self.get_object()
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(
+            data=request.data,
+            context={'request': request, 'appointment': appointment}
+        )
         serializer.is_valid(raise_exception=True)
         
         try:
             if serializer.validated_data.get('notes'):
                 appointment.provider_notes = serializer.validated_data['notes']
+            
+            # Set meeting_link if provided (required for online appointments)
+            if serializer.validated_data.get('meeting_link'):
+                appointment.meeting_link = serializer.validated_data['meeting_link']
+                appointment.save(update_fields=['meeting_link'])
+            
             appointment.confirm()
             
             return Response({
@@ -439,9 +449,13 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         Mark an appointment as completed.
         
         Only the provider can complete.
+        For online appointments, meeting_link must have been set during confirmation.
         """
         appointment = self.get_object()
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(
+            data=request.data,
+            context={'request': request, 'appointment': appointment}
+        )
         serializer.is_valid(raise_exception=True)
         
         try:

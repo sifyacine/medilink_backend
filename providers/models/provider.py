@@ -73,6 +73,12 @@ class Provider(models.Model):
         help_text='Last update timestamp'
     )
     
+    # Daily appointment limit (0 = unlimited)
+    daily_appointment_limit = models.PositiveIntegerField(
+        default=0,
+        help_text='Maximum appointments per day (0 = unlimited)'
+    )
+    
     class Meta:
         db_table = 'providers'
         verbose_name = 'Provider'

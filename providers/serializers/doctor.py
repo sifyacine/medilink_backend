@@ -74,6 +74,11 @@ class DoctorSerializer(serializers.ModelSerializer):
             'is_verified',
             'is_available',
             'is_home_service_available',
+            # Consultation pricing
+            'consultation_price',
+            'home_visit_price',
+            'online_consultation_price',
+            'currency',
             'specialties',
             'services',
             'provider_status',

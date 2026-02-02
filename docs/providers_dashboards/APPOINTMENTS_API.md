@@ -12,32 +12,33 @@ Providers can manage their appointment schedule, respond to patient requests, tr
 
 1. [Base URL](#base-url)
 2. [Authentication](#authentication)
-3. [Provider Appointment Workflow](#provider-appointment-workflow)
-4. [Provider-Patient Relationship](#-provider-patient-relationship)
-5. [Appointments Management](#appointments-management)
+3. [Daily Appointment Limit](#daily-appointment-limit)
+4. [Provider Appointment Workflow](#provider-appointment-workflow)
+5. [Provider-Patient Relationship](#-provider-patient-relationship)
+6. [Appointments Management](#appointments-management)
    - [List Appointments](#list-appointments)
    - [Get Appointment Details](#get-appointment-details)
    - [Advanced Search](#advanced-search)
    - [Create Appointment](#create-appointment)
    - [Update Appointment](#update-appointment)
-6. [Quick Access Endpoints](#quick-access-endpoints)
-7. [Appointment Actions](#appointment-actions)
+7. [Quick Access Endpoints](#quick-access-endpoints)
+8. [Appointment Actions](#appointment-actions)
    - [Confirm Appointment](#confirm-appointment)
    - [Reject Appointment](#reject-appointment)
    - [Cancel Appointment](#cancel-appointment)
    - [Complete Appointment](#complete-appointment)
    - [Mark No-Show](#mark-no-show)
    - [Reschedule Appointment](#reschedule-appointment)
-8. [Services Management](#services-management)
-9. [Prescription from Appointment](#prescription-from-appointment)
-10. [Statistics & Reports](#statistics--reports)
-11. [Availability Management](#availability-management)
-12. [Time Off Management](#time-off-management)
-13. [Available Slots API](#available-slots-api)
-14. [Provider Schedule View](#provider-schedule-view)
-15. [Appointment Choices](#appointment-choices)
-16. [Error Handling](#error-handling)
-17. [Web Integration Examples](#web-integration-examples)
+9. [Services Management](#services-management)
+10. [Prescription from Appointment](#prescription-from-appointment)
+11. [Statistics & Reports](#statistics--reports)
+12. [Availability Management](#availability-management)
+13. [Time Off Management](#time-off-management)
+14. [Available Slots API](#available-slots-api)
+15. [Provider Schedule View](#provider-schedule-view)
+16. [Appointment Choices](#appointment-choices)
+17. [Error Handling](#error-handling)
+18. [Web Integration Examples](#web-integration-examples)
 
 ---
 
@@ -58,6 +59,44 @@ Authorization: Token <your_token_here>
 ```
 
 **Important:** Provider accounts must be `APPROVED` to access appointment management features.
+
+---
+
+## Daily Appointment Limit
+
+Providers can set a **daily appointment limit** to control how many appointments can be booked per day. This helps manage workload and ensure quality care.
+
+### How It Works
+
+| `daily_appointment_limit` | Behavior |
+|---------------------------|----------|
+| `0` (default) | **Unlimited** - No restriction on daily bookings |
+| Any positive number (e.g., `20`) | Maximum appointments allowed per day |
+
+### Setting Your Daily Limit
+
+Update your provider profile to set the limit:
+
+```
+PATCH /api/doctors/profile/
+```
+
+```json
+{
+    "daily_appointment_limit": 20
+}
+```
+
+### What Happens When Limit is Reached
+
+When a patient tries to book an appointment on a date that has reached the daily limit:
+
+- **API Response:** `400 Bad Request`
+- **Error Message:** `"Daily appointment limit (20) reached for this date. Please choose another date."`
+
+### Checking Remaining Slots
+
+When viewing available slots, the system automatically excludes dates that have reached their daily limit.
 
 ---
 
@@ -302,6 +341,16 @@ GET /api/appointments/{id}/
 }
 ```
 
+#### Field Notes
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `scheduled_date` | string | **Required** - The appointment date (`YYYY-MM-DD`) |
+| `scheduled_time` | string \| null | **Optional** - The appointment time (`HH:MM:SS`). Can be `null` for date-only appointments |
+| `duration_minutes` | integer \| null | **Optional** - Duration in minutes (defaults to 30 if not set) |
+| `meeting_link` | string \| null | Video call URL. **Required for ONLINE appointments** when confirming |
+```
+
 ### Advanced Search
 
 ```
@@ -327,6 +376,22 @@ Providers can create appointments for patients.
 POST /api/appointments/
 ```
 
+#### Required vs Optional Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `scheduled_date` | ✅ Yes | The appointment date (`YYYY-MM-DD`) |
+| `patient_user` OR `patient_record` | ✅ One required | Patient identifier |
+| `location_type` | ❌ No | `CLINIC`, `HOME`, or `ONLINE` (defaults to `CLINIC`) |
+| `scheduled_time` | ❌ No | Specific time (`HH:MM`). If omitted, patient comes on that day without fixed time |
+| `duration_minutes` | ❌ No | Duration in minutes (defaults to 30) |
+| `service` | ❌ No | Service UUID |
+| `reason` | ❌ No | Visit reason |
+| `notes` | ❌ No | Additional notes |
+| `meeting_link` | ❌ No | Required later when confirming ONLINE appointments |
+
+> **💡 Flexible Scheduling:** The `scheduled_time` is optional. Providers can book appointments for a specific date without specifying a time. This is useful for walk-in clinics or when patients are expected to come during working hours without a fixed slot.
+
 #### For Registered Patient (User Account)
 
 ```json
@@ -339,6 +404,17 @@ POST /api/appointments/
     "service": "service-uuid",
     "reason": "Follow-up consultation",
     "notes": "Post-surgery review"
+}
+```
+
+#### For Date-Only Appointment (No Fixed Time)
+
+```json
+{
+    "patient_user": "patient-user-uuid",
+    "scheduled_date": "2026-02-05",
+    "location_type": "CLINIC",
+    "reason": "Walk-in consultation"
 }
 ```
 
@@ -364,9 +440,11 @@ POST /api/appointments/
     "scheduled_time": "16:00",
     "duration_minutes": 20,
     "location_type": "ONLINE",
-    "meeting_link": "https://meet.medilink.dz/dr-kaddour-123",
     "reason": "Telemedicine consultation"
 }
+```
+
+> **⚠️ Note for Online Appointments:** When creating an online appointment, you don't need to provide the `meeting_link` immediately. However, you **MUST** provide it when **confirming** the appointment. See [Confirm Appointment](#confirm-appointment).
 ```
 
 ### Response (201 Created)
@@ -491,11 +569,22 @@ Accept a patient's appointment request.
 POST /api/appointments/{id}/confirm/
 ```
 
-#### Request Body (Optional)
+#### Request Body
 
 ```json
 {
     "notes": "Confirmed. Please arrive 10 minutes early."
+}
+```
+
+#### For Online Appointments - Meeting Link Required
+
+> **⚠️ IMPORTANT:** When confirming an **ONLINE** appointment, you **MUST** provide the `meeting_link`. The system will reject the confirmation without it.
+
+```json
+{
+    "meeting_link": "https://meet.medilink.dz/dr-kaddour-123abc",
+    "notes": "Confirmed. Please join the meeting link 5 minutes before your scheduled time."
 }
 ```
 
@@ -510,9 +599,19 @@ POST /api/appointments/{id}/confirm/
         "status": "CONFIRMED",
         "status_display": "Confirmed",
         "confirmed_at": "2026-02-02T10:00:00Z",
-        "provider_notes": "Confirmed. Please arrive 10 minutes early."
+        "meeting_link": "https://meet.medilink.dz/dr-kaddour-123abc",
+        "provider_notes": "Confirmed. Please join the meeting link 5 minutes before your scheduled time."
     }
 }
+```
+
+#### Error Response - Missing Meeting Link (Online Appointments)
+
+```json
+{
+    "meeting_link": ["Meeting link is required for online appointments."]
+}
+```
 ```
 
 ### Reject Appointment
@@ -591,6 +690,8 @@ POST /api/appointments/{id}/complete/
 }
 ```
 
+> **⚠️ For Online Appointments:** The system validates that a `meeting_link` exists on the appointment before allowing completion. If the appointment is ONLINE and no meeting link was set during confirmation, completion will fail.
+
 #### Response (200 OK)
 
 ```json
@@ -604,6 +705,15 @@ POST /api/appointments/{id}/complete/
         "completed_at": "2026-02-03T09:45:00Z"
     }
 }
+```
+
+#### Error Response - Missing Meeting Link (Online Appointments)
+
+```json
+{
+    "meeting_link": ["Online appointment cannot be completed without a meeting link. Please add the meeting link first."]
+}
+```
 ```
 
 ### Mark No-Show
