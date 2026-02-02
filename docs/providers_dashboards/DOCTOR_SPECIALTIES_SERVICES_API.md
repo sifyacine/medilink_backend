@@ -50,7 +50,7 @@ All doctor-specific endpoints require authentication. Include your token in ever
 Authorization: Token <your_token_here>
 ```
 
-> **Note:** Only users with Doctor role can access doctor-specific endpoints like `/doctor-specialties/` and `/doctor-services/`.
+> **Note:** Authenticated doctors can access doctor-specific endpoints like `/doctor-specialties/` and `/doctor-services/`. These endpoints return an empty list for non-doctor users.
 
 ---
 
@@ -244,9 +244,11 @@ POST /api/specialties/doctor-specialties/
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
-| `specialty_id` | ✅ Yes | integer | ID of the specialty to add |
+| `specialty_id` | ✅ Yes | integer | ID of the specialty to add (write-only, maps to `specialty` internally) |
 | `is_primary` | ❌ No | boolean | Set as primary specialty (default: `false`) |
 | `years_of_experience` | ❌ No | integer | Years of experience in this specialty |
+
+> **Note:** Use `specialty_id` when creating/updating. The response will include `specialty` as a nested object.
 
 #### Example Request
 
@@ -422,8 +424,17 @@ GET /api/services/
 | `is_home_service` | boolean | Filter home visit services |
 | `is_active` | boolean | Filter active/inactive services |
 | `specialty` | integer | Filter by specialty ID |
+| `service_type` | string | Filter by type: `DOCTOR`, `NURSE`, `VTC`, `GENERAL` |
 | `ordering` | string | Order by: `title`, `price`, `created_at` |
 | `lang` | string | Response language: `en`, `ar`, `fr` |
+
+#### Filter by Service Type
+
+```
+GET /api/services/?service_type=DOCTOR
+```
+
+Returns only services for doctors.
 
 #### Response (200 OK)
 
@@ -610,11 +621,13 @@ POST /api/services/doctor-services/
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
-| `service_id` | ✅ Yes | integer | ID of the service to add |
+| `service_id` | ✅ Yes | integer | ID of the service to add (write-only, maps to `service` internally) |
 | `custom_price` | ❌ No | decimal | Your custom price (overrides default) |
 | `custom_duration_minutes` | ❌ No | integer | Your custom duration (overrides default) |
 | `is_available` | ❌ No | boolean | Whether you're currently offering this (default: `true`) |
 | `notes` | ❌ No | string | Additional notes about your service offering |
+
+> **Note:** Use `service_id` when creating/updating. The response will include `service` as a nested object with full details.
 
 #### Example Request
 
@@ -983,11 +996,33 @@ export default SpecialtyManager;
 }
 ```
 
+#### Provider Profile Not Found
+
+```json
+{
+    "detail": "Provider profile not found."
+}
+```
+
 #### Doctor Profile Not Found
 
 ```json
 {
     "detail": "Doctor profile not found."
+}
+```
+
+#### Error Creating Resource
+
+```json
+{
+    "detail": "Error creating service: <detailed error message>"
+}
+```
+
+```json
+{
+    "detail": "Error assigning specialty: <detailed error message>"
 }
 ```
 
@@ -999,12 +1034,18 @@ export default SpecialtyManager;
 }
 ```
 
-#### Permission Denied
-
 ```json
 {
-    "detail": "You do not have permission to perform this action."
+    "service_id": ["Invalid pk \"999\" - object does not exist."]
 }
+```
+
+#### Empty Result (Non-Doctor User)
+
+If you're not a doctor, these endpoints return an empty list instead of an error:
+
+```json
+[]
 ```
 
 ---
