@@ -54,6 +54,17 @@ class DoctorSerializer(serializers.ModelSerializer):
     specialties = serializers.SerializerMethodField()
     services = serializers.SerializerMethodField()
     
+    # Explicit pricing fields with proper decimal handling
+    consultation_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True
+    )
+    home_visit_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True
+    )
+    online_consultation_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True
+    )
+    
     class Meta:
         model = Doctor
         fields = [

@@ -78,9 +78,6 @@ GET /api/social-links/
 [
     {
         "id": 1,
-        "content_type": 15,
-        "content_type_name": "provider",
-        "object_id": 42,
         "platform": "FACEBOOK",
         "platform_display": "Facebook",
         "url": "https://facebook.com/dr.kaddour.clinic",
@@ -92,9 +89,6 @@ GET /api/social-links/
     },
     {
         "id": 2,
-        "content_type": 15,
-        "content_type_name": "provider",
-        "object_id": 42,
         "platform": "INSTAGRAM",
         "platform_display": "Instagram",
         "url": "https://instagram.com/dr.kaddour",
@@ -106,9 +100,6 @@ GET /api/social-links/
     },
     {
         "id": 3,
-        "content_type": 15,
-        "content_type_name": "provider",
-        "object_id": 42,
         "platform": "OTHER",
         "platform_display": "Other",
         "url": "https://doctolib.dz/dr-kaddour",
@@ -169,9 +160,6 @@ POST /api/social-links/
 ```json
 {
     "id": 4,
-    "content_type": 15,
-    "content_type_name": "provider",
-    "object_id": 42,
     "platform": "INSTAGRAM",
     "platform_display": "Instagram",
     "url": "https://instagram.com/dr.kaddour",
@@ -198,9 +186,6 @@ GET /api/social-links/{id}/
 ```json
 {
     "id": 1,
-    "content_type": 15,
-    "content_type_name": "provider",
-    "object_id": 42,
     "platform": "FACEBOOK",
     "platform_display": "Facebook",
     "url": "https://facebook.com/dr.kaddour.clinic",
@@ -242,9 +227,6 @@ PATCH /api/social-links/{id}/
 ```json
 {
     "id": 1,
-    "content_type": 15,
-    "content_type_name": "provider",
-    "object_id": 42,
     "platform": "FACEBOOK",
     "platform_display": "Facebook",
     "url": "https://facebook.com/dr.kaddour.official",

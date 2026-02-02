@@ -16,6 +16,12 @@ class SocialMediaLinkSerializer(serializers.ModelSerializer):
         source='content_type.model',
         read_only=True
     )
+    # Make these optional - they're set automatically in perform_create
+    content_type = serializers.PrimaryKeyRelatedField(
+        queryset=ContentType.objects.all(),
+        required=False
+    )
+    object_id = serializers.IntegerField(required=False)
     
     class Meta:
         model = SocialMediaLink

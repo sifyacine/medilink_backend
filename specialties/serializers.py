@@ -88,7 +88,8 @@ class SpecialtySerializer(LocalizedFieldsMixin, serializers.ModelSerializer):
     
     def get_doctors_count(self, obj):
         """Return count of doctors with this specialty."""
-        return obj.specialty_doctors.filter(doctor__provider__is_verified=True).count()
+        from common.enums import ProviderStatus
+        return obj.specialty_doctors.filter(doctor__provider__status=ProviderStatus.APPROVED).count()
 
 
 class SpecialtyListSerializer(LocalizedFieldsMixin, serializers.ModelSerializer):
