@@ -109,20 +109,38 @@ class DoctorSpecialtyViewSet(viewsets.ModelViewSet):
     Permissions: Only authenticated doctors can access.
     """
     serializer_class = DoctorSpecialtySerializer
-    permission_classes = [IsAuthenticated, IsDoctor]
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Return specialties for the authenticated doctor."""
-        try:
-            doctor = self.request.user.provider_profile.doctor_profile
-            return DoctorSpecialty.objects.filter(doctor=doctor).select_related('specialty')
-        except Exception:
+        user = self.request.user
+        if not user.is_authenticated:
             return DoctorSpecialty.objects.none()
+        
+        try:
+            if hasattr(user, 'provider_profile'):
+                provider = user.provider_profile
+                if hasattr(provider, 'doctor_profile'):
+                    doctor = provider.doctor_profile
+                    return DoctorSpecialty.objects.filter(doctor=doctor).select_related('specialty')
+        except Exception:
+            pass
+        
+        return DoctorSpecialty.objects.none()
     
     def perform_create(self, serializer):
         """Assign specialty to the authenticated doctor."""
+        user = self.request.user
+        
         try:
-            doctor = self.request.user.provider_profile.doctor_profile
+            if not hasattr(user, 'provider_profile'):
+                raise serializers.ValidationError({'detail': 'Provider profile not found.'})
+            
+            provider = user.provider_profile
+            if not hasattr(provider, 'doctor_profile'):
+                raise serializers.ValidationError({'detail': 'Doctor profile not found.'})
+            
+            doctor = provider.doctor_profile
             specialty = serializer.validated_data['specialty']
             
             # Check if already assigned
@@ -135,8 +153,10 @@ class DoctorSpecialtyViewSet(viewsets.ModelViewSet):
                 DoctorSpecialty.objects.filter(doctor=doctor, is_primary=True).update(is_primary=False)
             
             serializer.save(doctor=doctor)
-        except AttributeError:
-            raise serializers.ValidationError({'detail': 'Doctor profile not found.'})
+        except serializers.ValidationError:
+            raise
+        except Exception as e:
+            raise serializers.ValidationError({'detail': f'Error assigning specialty: {str(e)}'})
     
     @action(detail=False, methods=['post'])
     def assign(self, request):

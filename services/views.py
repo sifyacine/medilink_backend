@@ -43,7 +43,7 @@ class ServiceViewSet(viewsets.ModelViewSet):
     serializer_class = ServiceSerializer
     permission_classes = [AllowAny]  # Public read, restricted write
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['is_home_service', 'is_active', 'specialty']
+    filterset_fields = ['is_home_service', 'is_active', 'specialty', 'service_type']
     search_fields = ['title', 'description']
     ordering_fields = ['title', 'price', 'created_at']
     ordering = ['title']
@@ -74,7 +74,10 @@ class ServiceViewSet(viewsets.ModelViewSet):
         - Clinic creates: Create Service only (global catalog, no attachment)
         - Admin creates: Create Service only
         """
-        service = serializer.save()
+        try:
+            service = serializer.save()
+        except Exception as e:
+            raise serializers.ValidationError({'detail': f'Error creating service: {str(e)}'})
         
         # Check if creator is a doctor - auto-attach the service
         user = self.request.user
@@ -109,20 +112,38 @@ class DoctorServiceViewSet(viewsets.ModelViewSet):
     Permissions: Only authenticated doctors can access.
     """
     serializer_class = DoctorServiceSerializer
-    permission_classes = [IsAuthenticated, IsDoctor]
+    permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
         """Return services for the authenticated doctor."""
-        try:
-            doctor = self.request.user.provider_profile.doctor_profile
-            return DoctorService.objects.filter(doctor=doctor).select_related('service')
-        except Exception:
+        user = self.request.user
+        if not user.is_authenticated:
             return DoctorService.objects.none()
+        
+        try:
+            if hasattr(user, 'provider_profile'):
+                provider = user.provider_profile
+                if hasattr(provider, 'doctor_profile'):
+                    doctor = provider.doctor_profile
+                    return DoctorService.objects.filter(doctor=doctor).select_related('service')
+        except Exception:
+            pass
+        
+        return DoctorService.objects.none()
     
     def perform_create(self, serializer):
         """Assign service to the authenticated doctor."""
+        user = self.request.user
+        
         try:
-            doctor = self.request.user.provider_profile.doctor_profile
+            if not hasattr(user, 'provider_profile'):
+                raise serializers.ValidationError({'detail': 'Provider profile not found.'})
+            
+            provider = user.provider_profile
+            if not hasattr(provider, 'doctor_profile'):
+                raise serializers.ValidationError({'detail': 'Doctor profile not found.'})
+            
+            doctor = provider.doctor_profile
             service = serializer.validated_data['service']
             
             # Check if already assigned
@@ -130,8 +151,10 @@ class DoctorServiceViewSet(viewsets.ModelViewSet):
                 raise serializers.ValidationError({'service': 'Service already assigned to this doctor.'})
             
             serializer.save(doctor=doctor)
-        except AttributeError:
-            raise serializers.ValidationError({'detail': 'Doctor profile not found.'})
+        except serializers.ValidationError:
+            raise
+        except Exception as e:
+            raise serializers.ValidationError({'detail': f'Error assigning service: {str(e)}'})
 
 
 class NurseServiceViewSet(viewsets.ModelViewSet):

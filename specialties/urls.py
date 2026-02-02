@@ -9,8 +9,9 @@ from specialties.views import SpecialtyViewSet, DoctorSpecialtyViewSet
 app_name = 'specialties'
 
 router = DefaultRouter()
-router.register(r'', SpecialtyViewSet, basename='specialty')
+# Register specific routes BEFORE the catch-all empty route
 router.register(r'doctor-specialties', DoctorSpecialtyViewSet, basename='doctor-specialty')
+router.register(r'', SpecialtyViewSet, basename='specialty')
 
 urlpatterns = [
     path('', include(router.urls)),

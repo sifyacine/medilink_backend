@@ -9,9 +9,10 @@ from services.views import ServiceViewSet, DoctorServiceViewSet, NurseServiceVie
 app_name = 'services'
 
 router = DefaultRouter()
-router.register(r'', ServiceViewSet, basename='service')
+# Register specific routes BEFORE the catch-all empty route
 router.register(r'doctor-services', DoctorServiceViewSet, basename='doctor-service')
 router.register(r'nurse-services', NurseServiceViewSet, basename='nurse-service')
+router.register(r'', ServiceViewSet, basename='service')
 
 urlpatterns = [
     path('', include(router.urls)),
