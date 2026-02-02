@@ -378,6 +378,21 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
     is_home_service_available = serializers.BooleanField(required=False)
     phone_number = serializers.CharField(required=False, allow_blank=True)
     profile_image = serializers.ImageField(required=False, allow_null=True)
+    
+    # Pricing fields (for doctors)
+    consultation_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True
+    )
+    home_visit_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True
+    )
+    online_consultation_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, allow_null=True
+    )
+    currency = serializers.CharField(required=False, allow_blank=True)
+    
+    # Daily appointment limit (for providers)
+    daily_appointment_limit = serializers.IntegerField(required=False, min_value=0)
 
     # Sensitive provider fields that must NOT be changed directly
     # by the user. If these are sent, we return a clear error
@@ -412,6 +427,13 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             'is_home_service_available',
             'phone_number',
             'profile_image',
+            # Pricing fields (for doctors)
+            'consultation_price',
+            'home_visit_price',
+            'online_consultation_price',
+            'currency',
+            # Daily appointment limit (for providers)
+            'daily_appointment_limit',
             # Sensitive provider fields are declared as write-only and
             # explicitly blocked in `update()` with a clear message.
             'license_number',
@@ -440,6 +462,11 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             'is_home_service_available',
             'phone_number',
             'profile_image',
+            'consultation_price',
+            'home_visit_price',
+            'online_consultation_price',
+            'currency',
+            'daily_appointment_limit',
             'license_number',
             'degree_document',
         ]:
@@ -575,6 +602,19 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             set_field('is_home_service_available')
             set_field('profile_image')
             set_field('phone_number')
+        
+        # Doctor-specific pricing fields
+        if subtype == 'doctor':
+            set_field('consultation_price')
+            set_field('home_visit_price')
+            set_field('online_consultation_price')
+            set_field('currency')
+        
+        # Provider-level fields (on the Provider model, not subtype)
+        if 'daily_appointment_limit' in provider_fields:
+            if hasattr(provider, 'daily_appointment_limit'):
+                provider.daily_appointment_limit = provider_fields['daily_appointment_limit']
+                provider.save(update_fields=['daily_appointment_limit'])
 
         # Organization-style providers (clinic, lab, seller, vtc)
         if subtype in ('clinic', 'laboratory', 'seller', 'vtc'):
