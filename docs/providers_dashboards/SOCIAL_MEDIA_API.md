@@ -201,19 +201,33 @@ GET /api/social-links/{id}/
 
 ### Update Social Link
 
-Update an existing social media link.
+Update an existing social media link. You can only update links that belong to your profile.
+
+#### Full Update (PUT)
 
 ```
 PUT /api/social-links/{id}/
 ```
 
-or for partial updates:
+**Request Body (all fields):**
+
+```json
+{
+    "platform": "FACEBOOK",
+    "url": "https://facebook.com/dr.kaddour.official",
+    "custom_label": null,
+    "is_visible": true,
+    "display_order": 0
+}
+```
+
+#### Partial Update (PATCH) - Recommended
 
 ```
 PATCH /api/social-links/{id}/
 ```
 
-#### Request Body
+**Request Body (only fields you want to update):**
 
 ```json
 {
@@ -238,11 +252,13 @@ PATCH /api/social-links/{id}/
 }
 ```
 
+> **Important:** You can only update your own social links. Attempting to update another provider's link will return a 403 or 404 error.
+
 ---
 
 ### Delete Social Link
 
-Remove a social media link.
+Remove a social media link. You can only delete links that belong to your profile.
 
 ```
 DELETE /api/social-links/{id}/
@@ -251,6 +267,16 @@ DELETE /api/social-links/{id}/
 #### Response (204 No Content)
 
 No content is returned on successful deletion.
+
+#### Error Response (404 Not Found)
+
+If the link doesn't exist or doesn't belong to you:
+
+```json
+{
+    "detail": "Not found."
+}
+```
 
 ---
 
@@ -284,6 +310,18 @@ No content is returned on successful deletion.
 
 ### Permission Errors
 
+#### Not Authenticated
+
+```json
+{
+    "detail": "Authentication credentials were not provided."
+}
+```
+
+#### Cannot Update/Delete Others' Links
+
+When trying to update or delete a social link that doesn't belong to you:
+
 ```json
 {
     "detail": "You do not have permission to perform this action."
@@ -291,6 +329,8 @@ No content is returned on successful deletion.
 ```
 
 ### Not Found
+
+When the social link doesn't exist or you don't have access to it:
 
 ```json
 {
@@ -452,6 +492,14 @@ export default SocialMediaManager;
 ### Automatic Provider Association
 
 When you create a social media link as a provider, it is automatically attached to your provider profile. You don't need to manually specify `content_type` or `object_id` - the system handles this for you.
+
+### Ownership & Permissions
+
+- **Create:** Any authenticated provider can create social links
+- **Read (List):** You can only see your own social links
+- **Update:** You can only update your own social links
+- **Delete:** You can only delete your own social links
+- **Admins:** Can view, update, and delete any link
 
 ### Display Order
 

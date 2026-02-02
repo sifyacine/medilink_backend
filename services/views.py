@@ -14,7 +14,7 @@ from services.serializers import (
     DoctorServiceSerializer,
     NurseServiceSerializer,
 )
-from common.permissions import IsAdmin, IsDoctor, IsNurse, IsDoctorOrClinic
+from common.permissions import IsAdmin, IsDoctor, IsNurse, IsDoctorOrClinic, IsDoctorOrClinicOrAdmin
 from common.enums import ProviderType
 from rest_framework import serializers
 
@@ -56,7 +56,7 @@ class ServiceViewSet(viewsets.ModelViewSet):
         - read: Public
         """
         if self.action == 'create':
-            return [IsAuthenticated(), IsDoctorOrClinic() | IsAdmin()]
+            return [IsAuthenticated(), IsDoctorOrClinicOrAdmin()]
         elif self.action in ['update', 'partial_update', 'destroy']:
             return [IsAuthenticated(), IsAdmin()]
         return [AllowAny()]

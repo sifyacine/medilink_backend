@@ -191,6 +191,7 @@ class IsOwnerOrAdmin(permissions.BasePermission):
     unless they are an admin.
     
     Use this for viewsets where providers should only see their own data.
+    Handles both direct 'user' attribute and GenericForeignKey (content_object).
     """
     
     def has_object_permission(self, request, view, obj):
@@ -199,11 +200,77 @@ class IsOwnerOrAdmin(permissions.BasePermission):
             return True
         
         # Check if object has a user attribute (Provider, User, etc.)
-        if hasattr(obj, 'user'):
+        if hasattr(obj, 'user') and obj.user is not None:
             return obj.user == request.user
         
         # If object is a User, check direct match
         if isinstance(obj, User):
             return obj == request.user
         
+        # Handle GenericForeignKey (for SocialMediaLink, etc.)
+        if hasattr(obj, 'content_object') and obj.content_object is not None:
+            content_obj = obj.content_object
+            
+            # Direct user match
+            if isinstance(content_obj, User):
+                return content_obj == request.user
+            
+            # Object has user attribute (Provider, Doctor, Nurse, etc.)
+            if hasattr(content_obj, 'user'):
+                return content_obj.user == request.user
+            
+            # Object is a Provider - check if it belongs to the user
+            if hasattr(request.user, 'provider_profile'):
+                provider = request.user.provider_profile
+                
+                # Content object is the provider itself
+                if content_obj == provider:
+                    return True
+                
+                # Content object is a doctor profile of this provider
+                if hasattr(provider, 'doctor_profile') and content_obj == provider.doctor_profile:
+                    return True
+                
+                # Content object is a nurse profile of this provider
+                if hasattr(provider, 'nurse_profile') and content_obj == provider.nurse_profile:
+                    return True
+                
+                # Content object is a clinic profile of this provider
+                if hasattr(provider, 'clinic_profile') and content_obj == provider.clinic_profile:
+                    return True
+        
         return False
+
+
+class IsDoctorOrClinicOrAdmin(permissions.BasePermission):
+    """
+    Permission check: User must be authenticated and be either:
+    - A doctor (provider with doctor profile)
+    - A clinic (provider with clinic profile)
+    - An admin
+    
+    Use this for create actions where doctors, clinics, and admins can all create.
+    """
+    
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        
+        if not request.user.can_login:
+            return False
+        
+        # Admins can do everything
+        if request.user.role == UserRole.ADMIN:
+            return True
+        
+        # Check if provider with doctor or clinic profile
+        if request.user.role != UserRole.PROVIDER:
+            return False
+        
+        try:
+            provider = request.user.provider_profile
+            has_doctor = hasattr(provider, 'doctor_profile') and provider.doctor_profile is not None
+            has_clinic = hasattr(provider, 'clinic_profile') and provider.clinic_profile is not None
+            return has_doctor or has_clinic
+        except Exception:
+            return False
