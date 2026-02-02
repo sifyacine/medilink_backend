@@ -22,12 +22,36 @@ class PatientRegisterSerializer(serializers.Serializer):
         write_only=True,
         required=True
     )
+    # Patient identity fields
+    first_name = serializers.CharField(
+        max_length=100,
+        required=True,
+        help_text='Patient first name'
+    )
+    last_name = serializers.CharField(
+        max_length=100,
+        required=True,
+        help_text='Patient last name'
+    )
+    phone_number = serializers.CharField(
+        max_length=20,
+        required=True,
+        help_text='Patient phone number'
+    )
     
     def validate_email(self, value):
         """Check if email is already registered."""
         if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError('A user with this email already exists.')
         return value.lower()
+    
+    def validate_phone_number(self, value):
+        """Validate phone number format."""
+        # Remove spaces and dashes for storage
+        cleaned = value.replace(' ', '').replace('-', '')
+        if len(cleaned) < 8:
+            raise serializers.ValidationError('Phone number is too short.')
+        return cleaned
     
     def validate(self, attrs):
         """Validate password confirmation and per-type required fields."""
@@ -132,10 +156,13 @@ class PatientRegisterSerializer(serializers.Serializer):
         return attrs
     
     def create(self, validated_data):
-        """Create a new patient user."""
+        """Create a new patient user with identity fields."""
         user = User.objects.create_user(
             email=validated_data['email'],
             password=validated_data['password'],
+            first_name=validated_data['first_name'],
+            last_name=validated_data['last_name'],
+            phone_number=validated_data['phone_number'],
             role=UserRole.PATIENT,
             is_active=True,
         )

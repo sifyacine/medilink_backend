@@ -10,13 +10,16 @@ from common.enums import UserRole
 User = get_user_model()
 
 
-def create_patient_user(email, password):
+def create_patient_user(email, password, first_name='', last_name='', phone_number=''):
     """
     Create a new patient user.
     
     Args:
         email: User email address
         password: User password
+        first_name: Patient first name (optional)
+        last_name: Patient last name (optional)
+        phone_number: Patient phone number (optional)
         
     Returns:
         User instance
@@ -33,6 +36,9 @@ def create_patient_user(email, password):
     user = User.objects.create_user(
         email=email_lower,
         password=password,
+        first_name=first_name,
+        last_name=last_name,
+        phone_number=phone_number,
         role=UserRole.PATIENT,
         is_active=True,
     )

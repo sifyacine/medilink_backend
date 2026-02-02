@@ -30,7 +30,10 @@ def patient_register(request):
     {
         "email": "patient@example.com",
         "password": "securepassword123",
-        "password_confirm": "securepassword123"
+        "password_confirm": "securepassword123",
+        "first_name": "John",
+        "last_name": "Doe",
+        "phone_number": "+213555123456"
     }
     
     Response:
@@ -39,6 +42,9 @@ def patient_register(request):
             "id": 1,
             "email": "patient@example.com",
             "role": "PATIENT",
+            "first_name": "John",
+            "last_name": "Doe",
+            "phone_number": "+213555123456",
             "is_active": true,
             "created_at": "2026-01-26T10:00:00Z"
         },
@@ -51,6 +57,9 @@ def patient_register(request):
         user = create_patient_user(
             email=serializer.validated_data['email'],
             password=serializer.validated_data['password'],
+            first_name=serializer.validated_data['first_name'],
+            last_name=serializer.validated_data['last_name'],
+            phone_number=serializer.validated_data['phone_number'],
         )
         token = get_or_create_auth_token(user)
         

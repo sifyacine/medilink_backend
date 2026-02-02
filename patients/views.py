@@ -2,10 +2,24 @@
 Views for Patient Records app.
 
 Provides endpoints for:
-- Providers to create/manage patient records
+- Providers to create/manage patient records for patients
 - Patients to link their accounts to existing records
+- Patients to view their medical records, prescriptions, and history
 - Managing provider access to patient records
 - Secure medical record sharing via tokens
+
+Patient Endpoints:
+- GET /api/patients/me/ - Get linked patient record
+- GET /api/patients/my-records/ - Get medical records
+- GET /api/patients/my-share-tokens/ - List share tokens
+- POST /api/patients/link-account/ - Link to existing record
+- POST /api/patients/share-tokens/ - Create share token
+
+Related Patient Endpoints (in other apps):
+- GET /api/prescriptions/my-prescriptions/ - View prescriptions
+- GET /api/appointments/appointments/ - View appointments
+- GET/POST /api/addresses/ - Manage addresses
+- GET/PATCH /api/auth/me/ - View/update profile
 """
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action, api_view, permission_classes

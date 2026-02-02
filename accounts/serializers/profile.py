@@ -24,6 +24,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
     is_active = serializers.BooleanField(read_only=True)
     is_staff = serializers.BooleanField(read_only=True)
     
+    # Identity fields (for patients, stored on User)
+    first_name = serializers.CharField(read_only=True)
+    last_name = serializers.CharField(read_only=True)
+    full_name = serializers.SerializerMethodField()
+    phone_number = serializers.CharField(read_only=True)
+    
     # Verification and status
     email_verified = serializers.BooleanField(read_only=True)
     email_verified_at = serializers.DateTimeField(read_only=True)
@@ -58,6 +64,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'email',
             'role',
             'role_display',
+            'first_name',
+            'last_name',
+            'full_name',
+            'phone_number',
             'account_status',
             'account_status_display',
             'is_active',
@@ -78,6 +88,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'subtype',
             'subtype_display',
         ]
+    
+    def get_full_name(self, obj):
+        """Return full name from model method."""
+        return obj.get_full_name()
     
     def get_provider_profile(self, obj):
         """Get provider-specific profile data if user is a provider."""
@@ -156,8 +170,13 @@ class UserProfileSerializer(serializers.ModelSerializer):
         
         profile_data = {
             'is_patient': True,
+            'first_name': obj.first_name,
+            'last_name': obj.last_name,
+            'full_name': obj.get_full_name(),
+            'phone_number': obj.phone_number,
             'has_patient_record': False,
             'patient_record': None,
+            'medical_summary': None,
         }
         
         # Check if this user has a linked PatientRecord
@@ -170,6 +189,37 @@ class UserProfileSerializer(serializers.ModelSerializer):
                     patient_record,
                     context=self.context,
                 ).data
+                
+                # Add medical summary counts
+                try:
+                    from medical_record.models import MedicalRecord
+                    from prescriptions.models import Prescription
+                    from appointments.models import Appointment
+                    from django.db.models import Q
+                    
+                    # Count medical records
+                    medical_records_count = MedicalRecord.objects.filter(
+                        Q(patient_record=patient_record) | Q(patient=obj),
+                        is_active=True
+                    ).distinct().count()
+                    
+                    # Count prescriptions
+                    prescriptions_count = Prescription.objects.filter(
+                        Q(patient=obj) | Q(patient_record=patient_record)
+                    ).distinct().count()
+                    
+                    # Count appointments
+                    appointments_count = Appointment.objects.filter(
+                        Q(patient_user=obj) | Q(patient_record=patient_record)
+                    ).distinct().count()
+                    
+                    profile_data['medical_summary'] = {
+                        'medical_records_count': medical_records_count,
+                        'prescriptions_count': prescriptions_count,
+                        'appointments_count': appointments_count,
+                    }
+                except Exception:
+                    pass
         except Exception:
             pass
         
@@ -371,11 +421,14 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         """
         Update user instance.
-        Note: Most fields are read-only, so this mainly handles edge cases.
-        Role-specific profile updates should be handled in separate endpoints.
+        Handles both patient and provider profile updates.
         """
-        # Pull out provider-related fields so they are not applied
-        # to the User instance directly.
+        # For patients, first_name, last_name, and phone_number are stored 
+        # directly on the User model. For providers, they go to subtype profiles.
+        patient_direct_fields = ['first_name', 'last_name', 'phone_number']
+        
+        # Pull out profile-related fields so they are not applied
+        # to the User instance directly (for providers).
         provider_fields = {}
         for field in [
             'first_name',
@@ -413,6 +466,23 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         # Apply remaining (safe) fields to the User instance
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
+        
+        # For patients, apply identity fields directly to User model
+        if instance.is_patient:
+            for field in patient_direct_fields:
+                if field in provider_fields:
+                    setattr(instance, field, provider_fields[field])
+            instance.save()
+            
+            # Recalculate profile completion after update
+            try:
+                instance.recalculate_profile_completion()
+            except Exception:
+                pass
+            
+            return instance
+        
+        # For non-patients, just save the User instance
         instance.save()
 
         # If no provider-related fields were supplied, we're done

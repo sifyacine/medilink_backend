@@ -98,6 +98,23 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text='When email was verified'
     )
     
+    # Patient identity fields (stored on User for simplicity)
+    first_name = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='First name (primarily for patients)'
+    )
+    last_name = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='Last name (primarily for patients)'
+    )
+    phone_number = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text='Phone number'
+    )
+    
     # Login tracking
     last_login = models.DateTimeField(
         null=True,
@@ -180,12 +197,16 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.email
     
     def get_full_name(self):
-        """Return the email as the full name."""
+        """Return the user's full name if available, otherwise email."""
+        if self.first_name and self.last_name:
+            return f'{self.first_name} {self.last_name}'
+        if self.first_name:
+            return self.first_name
         return self.email
     
     def get_short_name(self):
-        """Return the email as the short name."""
-        return self.email
+        """Return the user's first name if available, otherwise email."""
+        return self.first_name if self.first_name else self.email
     
     @property
     def is_patient(self):
@@ -254,8 +275,39 @@ class User(AbstractBaseUser, PermissionsMixin):
         # Base signal: email verified improves completion
         add(self.email_verified)
 
+        # Patient-specific completion
+        if self.is_patient:
+            # Core identity fields for patients
+            add(bool(self.first_name))
+            add(bool(self.last_name))
+            add(bool(self.phone_number))
+            
+            # Check for linked patient record (provides medical info)
+            try:
+                if hasattr(self, 'patient_record') and self.patient_record:
+                    patient_record = self.patient_record
+                    add(bool(patient_record.date_of_birth))
+                    add(bool(patient_record.gender))
+                    # Having a linked patient record is a strong signal
+                    add(True)
+            except Exception:
+                pass
+            
+            # Check for at least one address
+            try:
+                from django.contrib.contenttypes.models import ContentType
+                from address.models import Address
+                user_content_type = ContentType.objects.get_for_model(self.__class__)
+                has_address = Address.objects.filter(
+                    content_type=user_content_type,
+                    object_id=self.id
+                ).exists()
+                add(has_address)
+            except Exception:
+                pass
+
         # Provider-specific completion based on subtype
-        if self.is_provider:
+        elif self.is_provider:
             try:
                 provider = self.provider_profile
             except Exception:
