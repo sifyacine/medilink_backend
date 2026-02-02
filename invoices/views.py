@@ -543,6 +543,174 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         overdue_invoices = queryset.filter(status=InvoiceStatus.OVERDUE)
         serializer = InvoiceListSerializer(overdue_invoices, many=True)
         return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def uninvoiced_appointments(self, request):
+        """
+        Get list of completed appointments without invoices.
+        
+        Helps doctors identify appointments that need to be invoiced.
+        
+        Query Parameters:
+        - start_date: Filter from date (YYYY-MM-DD)
+        - end_date: Filter to date (YYYY-MM-DD)
+        """
+        from appointments.models import Appointment, AppointmentStatus
+        from appointments.serializers import AppointmentListSerializer as AppointmentSerializer
+        
+        user = request.user
+        
+        # Get provider
+        if user.role != UserRole.PROVIDER:
+            if user.role != UserRole.ADMIN:
+                return Response(
+                    {'error': 'Only providers can access uninvoiced appointments.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
+        # Get completed appointments without invoices
+        queryset = Appointment.objects.filter(
+            status=AppointmentStatus.COMPLETED
+        ).exclude(
+            invoices__isnull=False  # Exclude appointments that have invoices
+        )
+        
+        # Filter by provider if not admin
+        if user.role == UserRole.PROVIDER:
+            if hasattr(user, 'provider_profile'):
+                queryset = queryset.filter(provider=user.provider_profile)
+            else:
+                return Response([])
+        
+        # Date filters
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        
+        if start_date:
+            queryset = queryset.filter(scheduled_date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(scheduled_date__lte=end_date)
+        
+        queryset = queryset.order_by('-scheduled_date')[:50]  # Limit to 50
+        
+        serializer = AppointmentSerializer(queryset, many=True, context={'request': request})
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def financial_summary(self, request):
+        """
+        Get comprehensive financial summary for providers.
+        
+        Includes:
+        - Total revenue (paid invoices)
+        - Outstanding amount (unpaid)
+        - Revenue by service type
+        - Monthly breakdown
+        - Payment method distribution
+        
+        Query Parameters:
+        - period: 'week', 'month', 'quarter', 'year' (default: 'month')
+        - start_date: Custom start date (YYYY-MM-DD)
+        - end_date: Custom end date (YYYY-MM-DD)
+        """
+        queryset = self.get_queryset()
+        
+        # Determine date range
+        period = request.query_params.get('period', 'month')
+        today = timezone.now().date()
+        
+        if request.query_params.get('start_date'):
+            start_date = request.query_params.get('start_date')
+        else:
+            if period == 'week':
+                start_date = today - timedelta(days=7)
+            elif period == 'month':
+                start_date = today - timedelta(days=30)
+            elif period == 'quarter':
+                start_date = today - timedelta(days=90)
+            elif period == 'year':
+                start_date = today - timedelta(days=365)
+            else:
+                start_date = today - timedelta(days=30)
+        
+        end_date = request.query_params.get('end_date', today)
+        
+        # Filter by date range
+        queryset = queryset.filter(issue_date__gte=start_date, issue_date__lte=end_date)
+        
+        # Calculate totals
+        from django.db.models.functions import TruncMonth
+        
+        total_revenue = queryset.filter(
+            status=InvoiceStatus.PAID
+        ).aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+        
+        total_outstanding = queryset.filter(
+            status__in=[InvoiceStatus.SENT, InvoiceStatus.VIEWED, 
+                       InvoiceStatus.PARTIALLY_PAID, InvoiceStatus.OVERDUE]
+        ).aggregate(
+            total=Sum('total'),
+            paid=Sum('amount_paid')
+        )
+        outstanding = (total_outstanding['total'] or Decimal('0.00')) - (total_outstanding['paid'] or Decimal('0.00'))
+        
+        # Revenue by invoice type
+        revenue_by_type = queryset.filter(
+            status=InvoiceStatus.PAID
+        ).values('invoice_type').annotate(
+            total=Sum('total'),
+            count=Count('id')
+        )
+        
+        # Payment method distribution (from payments on paid invoices)
+        payment_methods = Payment.objects.filter(
+            invoice__in=queryset.filter(status=InvoiceStatus.PAID),
+            is_refund=False
+        ).values('payment_method').annotate(
+            total=Sum('amount'),
+            count=Count('id')
+        )
+        
+        # Monthly revenue trend
+        monthly_revenue = queryset.filter(
+            status=InvoiceStatus.PAID
+        ).annotate(
+            month=TruncMonth('paid_at')
+        ).values('month').annotate(
+            total=Sum('total'),
+            count=Count('id')
+        ).order_by('month')
+        
+        # Uninvoiced appointments count
+        from appointments.models import Appointment, AppointmentStatus
+        uninvoiced_count = 0
+        if hasattr(request.user, 'provider_profile'):
+            uninvoiced_count = Appointment.objects.filter(
+                provider=request.user.provider_profile,
+                status=AppointmentStatus.COMPLETED
+            ).exclude(
+                invoices__isnull=False
+            ).count()
+        
+        data = {
+            'period': period,
+            'start_date': str(start_date),
+            'end_date': str(end_date),
+            'total_revenue': total_revenue,
+            'total_outstanding': outstanding,
+            'uninvoiced_appointments': uninvoiced_count,
+            'revenue_by_type': list(revenue_by_type),
+            'payment_methods': list(payment_methods),
+            'monthly_revenue': list(monthly_revenue),
+            'invoices_count': queryset.count(),
+            'paid_count': queryset.filter(status=InvoiceStatus.PAID).count(),
+            'pending_count': queryset.filter(
+                status__in=[InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.PARTIALLY_PAID]
+            ).count(),
+            'overdue_count': queryset.filter(status=InvoiceStatus.OVERDUE).count(),
+        }
+        
+        return Response(data)
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
