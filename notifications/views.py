@@ -68,8 +68,8 @@ def register_device_api(request):
         "device_type": "android" | "ios" | "web"
     }
     """
-    token = request.data.get('token')
-    device_type = request.data.get('device_type', 'android')
+    token = (request.data.get('token') or '').strip()
+    device_type = (request.data.get('device_type') or 'web').strip().lower()
     
     if not token:
         return Response(
@@ -120,7 +120,7 @@ def register_device_api(request):
         return Response({
             'success': True,
             'message': f'Token {"registered" if created else "updated"} successfully',
-            'device_id': device_token.id,
+            'device_id': str(device_token.id),
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
         
     except Exception as e:
