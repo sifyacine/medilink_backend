@@ -6,39 +6,49 @@ This documentation covers the **Appointments API** for Provider Web Dashboards. 
 
 Providers can manage their appointment schedule, respond to patient requests, track appointments, manage availability, and generate reports.
 
+### 🆕 New Features
+
+- **🔔 Real-Time Notifications**: Appointments update instantly without page refresh via WebSocket
+- **🏥 Multi-Service Selection**: Patients can select multiple services when booking
+- **💰 Custom Pricing**: Each doctor can set custom prices for services
+- **📊 Daily Limit Enforcement**: Control daily appointment capacity
+- **👥 Auto Patient Relationship**: Patients automatically added to your list on confirmation
+
 ---
 
 ## Table of Contents
 
 1. [Base URL](#base-url)
 2. [Authentication](#authentication)
-3. [Daily Appointment Limit](#daily-appointment-limit)
-4. [Provider Appointment Workflow](#provider-appointment-workflow)
-5. [Provider-Patient Relationship](#-provider-patient-relationship)
-6. [Appointments Management](#appointments-management)
+3. [🆕 Real-Time Updates](#-real-time-updates)
+4. [🆕 Multi-Service Selection](#-multi-service-selection)
+5. [Daily Appointment Limit](#daily-appointment-limit)
+6. [Provider Appointment Workflow](#provider-appointment-workflow)
+7. [Provider-Patient Relationship](#-provider-patient-relationship)
+8. [Appointments Management](#appointments-management)
    - [List Appointments](#list-appointments)
    - [Get Appointment Details](#get-appointment-details)
    - [Advanced Search](#advanced-search)
    - [Create Appointment](#create-appointment)
    - [Update Appointment](#update-appointment)
-7. [Quick Access Endpoints](#quick-access-endpoints)
-8. [Appointment Actions](#appointment-actions)
+9. [Quick Access Endpoints](#quick-access-endpoints)
+10. [Appointment Actions](#appointment-actions)
    - [Confirm Appointment](#confirm-appointment)
    - [Reject Appointment](#reject-appointment)
    - [Cancel Appointment](#cancel-appointment)
    - [Complete Appointment](#complete-appointment)
    - [Mark No-Show](#mark-no-show)
    - [Reschedule Appointment](#reschedule-appointment)
-9. [Services Management](#services-management)
-10. [Prescription from Appointment](#prescription-from-appointment)
-11. [Statistics & Reports](#statistics--reports)
-12. [Availability Management](#availability-management)
-13. [Time Off Management](#time-off-management)
-14. [Available Slots API](#available-slots-api)
-15. [Provider Schedule View](#provider-schedule-view)
-16. [Appointment Choices](#appointment-choices)
-17. [Error Handling](#error-handling)
-18. [Web Integration Examples](#web-integration-examples)
+11. [Services Management](#services-management)
+12. [Prescription from Appointment](#prescription-from-appointment)
+13. [Statistics & Reports](#statistics--reports)
+14. [Availability Management](#availability-management)
+15. [Time Off Management](#time-off-management)
+16. [Available Slots API](#available-slots-api)
+17. [Provider Schedule View](#provider-schedule-view)
+18. [Appointment Choices](#appointment-choices)
+19. [Error Handling](#error-handling)
+20. [Web Integration Examples](#web-integration-examples)
 
 ---
 
@@ -62,6 +72,130 @@ Authorization: Token <your_token_here>
 
 ---
 
+## 🆕 Real-Time Updates
+
+### Overview
+
+Appointments now update **instantly in your dashboard** without needing to refresh the page. This is powered by **WebSocket** technology.
+
+### How It Works
+
+```
+Patient books appointment ──▶ Database saved ──▶ WebSocket broadcast ──▶ Your dashboard updates
+```
+
+**You see the new appointment immediately!** ✨
+
+### Benefits
+
+- ✅ **No Manual Refresh Required**: New appointments appear instantly
+- ✅ **Real-Time Status Updates**: See when patient confirms, cancels, or reschedules
+- ✅ **Live Notifications**: Get notified immediately when appointment events occur
+- ✅ **Better User Experience**: More responsive and professional interface
+
+### Implementation
+
+See [NOTIFICATIONS_SETUP.md](../NOTIFICATIONS_SETUP.md) for complete setup instructions including:
+- WebSocket connection configuration
+- Frontend integration examples
+- Firebase Cloud Messaging setup
+- Testing procedures
+
+### Quick WebSocket Connection Example
+
+```javascript
+const ws = new WebSocket('ws://api.medilink.com/ws/notifications/?token=YOUR_AUTH_TOKEN');
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  
+  if (data.type === 'notification') {
+    // New notification (e.g., appointment created)
+    showNotification(data.notification);
+    refreshAppointmentList();
+  } else if (data.type === 'appointment_update') {
+    // Appointment status changed
+    updateAppointmentInList(data.appointment);
+  }
+};
+```
+
+---
+
+## 🆕 Multi-Service Selection
+
+### Overview
+
+Patients can now **select multiple services** when booking an appointment. Each service can have **custom pricing** that you set.
+
+### How It Works for Patients
+
+1. **Browse Your Services**: Patient sees all services you offer
+2. **Select Multiple Services**: Patient can choose multiple services (e.g., Consultation + ECG)
+3. **See Total Price**: System calculates and shows total price before booking
+4. **Submit Request**: Appointment request sent with all selected services
+
+### How It Works for Providers
+
+When you receive an appointment request, you see:
+
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "patient_name": "Ahmed Ben Ali",
+  "scheduled_date": "2024-01-15",
+  "scheduled_time": "10:00:00",
+  "reason": "General checkup + ECG",
+  
+  "selected_services": [
+    {
+      "service_id": "service-uuid-1",
+      "service_name": "General Consultation",
+      "service_description": "Initial consultation and examination",
+      "price": "3000.00",
+      "currency": "DZD"
+    },
+    {
+      "service_id": "service-uuid-2",
+      "service_name": "ECG (Electrocardiogram)",
+      "service_description": "Heart electrical activity test",
+      "price": "2000.00",
+      "currency": "DZD"
+    }
+  ],
+  
+  "total_price": "5000.00",
+  
+  "status": "PENDING"
+}
+```
+
+### Setting Custom Pricing
+
+You can set custom prices for your services:
+
+```http
+POST /api/services/doctor-services/
+```
+
+```json
+{
+  "service": "service-uuid",
+  "custom_price": "3500.00"
+}
+```
+
+If you don't set custom pricing, the base service price is used.
+
+### Benefits
+
+- ✅ **Increased Revenue**: Patients can book multiple services in one appointment
+- ✅ **Better Planning**: See exactly what services patient wants before appointment
+- ✅ **Transparency**: Patients know total cost upfront
+- ✅ **Flexibility**: Each doctor sets their own pricing
+
+---
+
 ## Daily Appointment Limit
 
 Providers can set a **daily appointment limit** to control how many appointments can be booked per day. This helps manage workload and ensure quality care.
@@ -77,13 +211,13 @@ Providers can set a **daily appointment limit** to control how many appointments
 
 Update your provider profile to set the limit:
 
-```
+```http
 PATCH /api/doctors/profile/
 ```
 
 ```json
 {
-    "daily_appointment_limit": 20
+  "daily_appointment_limit": 20
 }
 ```
 
@@ -92,7 +226,9 @@ PATCH /api/doctors/profile/
 When a patient tries to book an appointment on a date that has reached the daily limit:
 
 - **API Response:** `400 Bad Request`
-- **Error Message:** `"Daily appointment limit (20) reached for this date. Please choose another date."`
+- **Error Message:** `"This provider has reached their daily appointment limit (20) for this date. Please choose another date."`
+
+**✨ The patient will not be able to select this date** - it will be grayed out or hidden in the date picker.
 
 ### Checking Remaining Slots
 
@@ -108,8 +244,9 @@ When viewing available slots, the system automatically excludes dates that have 
 ├───────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                    │
 │  ┌──────────────────────────────────────────────────────────────────────────────┐ │
-│  │                    INCOMING PATIENT REQUESTS                                  │ │
-│  │  Patient books via app ──▶ Notification ──▶ Dashboard (Status: PENDING)     │ │
+│  │                    INCOMING PATIENT REQUESTS (Real-Time)                      │ │
+│  │  Patient books ──▶ WebSocket ──▶ Dashboard updates ──▶ Status: PENDING      │ │
+│  │  (You see it immediately - no refresh needed!)                                │ │
 │  └──────────────────────────────────────────────────────────────────────────────┘ │
 │                                      │                                            │
 │                     ┌────────────────┴────────────────┐                          │
@@ -118,12 +255,16 @@ When viewing available slots, the system automatically excludes dates that have 
 │             │   CONFIRM    │                   │    REJECT    │                   │
 │             │  ✓ Accept    │                   │  ✗ Decline   │                   │
 │             │    booking   │                   │  with reason │                   │
+│             │ (Patient auto│                   │              │                   │
+│             │  added to    │                   │              │                   │
+│             │  your list)  │                   │              │                   │
 │             └──────┬───────┘                   └──────────────┘                   │
 │                    │                                                              │
 │                    ▼                                                              │
 │  ┌──────────────────────────────────────────────────────────────────────────────┐ │
 │  │                    APPOINTMENT DAY                                            │ │
-│  │  • View patient info  • Access records  • Add services  • Create prescription│ │
+│  │  • View patient info  • See all selected services  • Add more services       │ │
+│  │  • Access medical history  • Create prescription  • Update records           │ │
 │  └──────────────────────────────────────────────────────────────────────────────┘ │
 │                    │                                                              │
 │       ┌────────────┼────────────┬────────────┐                                   │
@@ -132,12 +273,16 @@ When viewing available slots, the system automatically excludes dates that have 
 │ │ COMPLETE │ │ NO_SHOW  │ │  CANCEL  │ │RESCHEDULE│                              │
 │ │ ✓ Visit  │ │ Patient  │ │ Provider │ │ Move to  │                              │
 │ │   done   │ │ absent   │ │ cancels  │ │ new slot │                              │
+│ │ (Invoice │ │          │ │          │ │ (Patient │                              │
+│ │  auto-   │ │          │ │          │ │  stays   │                              │
+│ │ created) │ │          │ │          │ │  in list)│                              │
 │ └──────────┘ └──────────┘ └──────────┘ └──────────┘                              │
 │       │                                                                           │
 │       ▼                                                                           │
 │  ┌──────────────────────────────────────────────────────────────────────────────┐ │
 │  │                    POST-APPOINTMENT                                           │ │
-│  │  • Create prescription  • Update medical record  • Generate invoice          │ │
+│  │  • View invoice  • Create prescription  • Update medical record              │ │
+│  │  • Patient can see invoice and pay                                           │ │
 │  └──────────────────────────────────────────────────────────────────────────────┘ │
 │                                                                                    │
 └───────────────────────────────────────────────────────────────────────────────────┘

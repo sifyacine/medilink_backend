@@ -20,12 +20,60 @@ from .models import (
     ProviderAvailability,
     ProviderTimeOff,
     DayOfWeek,
+    AppointmentService,
 )
 from .services import SchedulingService
 from providers.models.provider import Provider
 from patients.models import PatientRecord
 from accounts.models import User
 from common.utils import get_patient_display_name, get_provider_display_name
+
+
+class AppointmentServiceDetailSerializer(serializers.ModelSerializer):
+    """
+    Serializer for services included in an appointment.
+    Shows service details with custom pricing if set by the doctor.
+    """
+    service_id = serializers.UUIDField(source='service.id', read_only=True)
+    service_name = serializers.CharField(source='service.name', read_only=True)
+    service_description = serializers.CharField(source='service.description', read_only=True)
+    
+    # Show the custom price if doctor has set one, otherwise base price
+    price = serializers.SerializerMethodField()
+    currency = serializers.CharField(source='service.currency', read_only=True)
+    
+    class Meta:
+        model = AppointmentService
+        fields = [
+            'id',
+            'service_id',
+            'service_name',
+            'service_description',
+            'price',
+            'currency',
+            'notes',
+        ]
+    
+    def get_price(self, obj):
+        """
+        Get the price for this service.
+        If doctor has custom pricing for this service, use that.
+        Otherwise, use the base service price.
+        """
+        from services.models import DoctorService
+        
+        service = obj.service
+        provider = obj.appointment.provider
+        
+        # Check if doctor has custom pricing for this service
+        try:
+            doctor_service = DoctorService.objects.get(
+                doctor=provider,
+                service=service
+            )
+            return str(doctor_service.custom_price) if doctor_service.custom_price else str(service.price)
+        except DoctorService.DoesNotExist:
+            return str(service.price)
 
 
 class AppointmentListSerializer(serializers.ModelSerializer):
@@ -81,6 +129,11 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
     """
     Detailed serializer for viewing full appointment information.
     Uses centralized utilities for consistent data presentation.
+    
+    **Multi-Service Support:**
+    - Shows all selected services with their prices
+    - Displays custom pricing if doctor has set it
+    - Calculates total price for the appointment
     """
     provider_name = serializers.SerializerMethodField()
     provider_email = serializers.EmailField(source='provider.user.email', read_only=True)
@@ -92,6 +145,10 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
     
     service_name = serializers.CharField(source='service.name', read_only=True, allow_null=True)
     service_description = serializers.CharField(source='service.description', read_only=True, allow_null=True)
+    
+    # Selected services with prices
+    selected_services = serializers.SerializerMethodField()
+    total_price = serializers.SerializerMethodField()
     
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     location_type_display = serializers.CharField(source='get_location_type_display', read_only=True)
@@ -122,6 +179,9 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
             'service',
             'service_name',
             'service_description',
+            # Multi-service selection
+            'selected_services',
+            'total_price',
             # Scheduling
             'scheduled_date',
             'scheduled_time',
@@ -184,6 +244,69 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
         from common.utils import get_patient_phone
         return get_patient_phone(obj.patient_user, obj.patient_record)
     
+    def get_selected_services(self, obj):
+        """Get all services selected for this appointment with their prices."""
+        appointment_services = obj.appointment_services.all()
+        if not appointment_services.exists():
+            # If no services in the through table, return the primary service if it exists
+            if obj.service:
+                from services.models import DoctorService
+                try:
+                    doctor_service = DoctorService.objects.get(
+                        doctor=obj.provider,
+                        service=obj.service
+                    )
+                    price = str(doctor_service.custom_price) if doctor_service.custom_price else str(obj.service.price)
+                except DoctorService.DoesNotExist:
+                    price = str(obj.service.price)
+                
+                return [{
+                    'service_id': str(obj.service.id),
+                    'service_name': obj.service.name,
+                    'service_description': obj.service.description,
+                    'price': price,
+                    'currency': obj.service.currency,
+                }]
+            return []
+        
+        return AppointmentServiceDetailSerializer(appointment_services, many=True).data
+    
+    def get_total_price(self, obj):
+        """Calculate total price of all selected services."""
+        from decimal import Decimal
+        from services.models import DoctorService
+        
+        total = Decimal('0.00')
+        appointment_services = obj.appointment_services.all()
+        
+        if not appointment_services.exists():
+            # Use primary service price if no services in through table
+            if obj.service:
+                try:
+                    doctor_service = DoctorService.objects.get(
+                        doctor=obj.provider,
+                        service=obj.service
+                    )
+                    total = doctor_service.custom_price or obj.service.price
+                except DoctorService.DoesNotExist:
+                    total = obj.service.price
+        else:
+            # Calculate total from all selected services
+            for app_service in appointment_services:
+                service = app_service.service
+                try:
+                    doctor_service = DoctorService.objects.get(
+                        doctor=obj.provider,
+                        service=service
+                    )
+                    price = doctor_service.custom_price or service.price
+                except DoctorService.DoesNotExist:
+                    price = service.price
+                
+                total += price
+        
+        return str(total)
+    
     def get_created_by_name(self, obj):
         if obj.created_by:
             return obj.created_by.get_full_name() or obj.created_by.email
@@ -206,8 +329,13 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
     Serializer for creating appointments.
     
     Can be used by:
-    - Patients: Must specify provider, can optionally specify service
+    - Patients: Must specify provider, can optionally specify service(s)
     - Providers: Must specify patient_user OR patient_record
+    
+    **Multi-Service Selection:**
+    - Patient can select multiple services when booking
+    - Each service can have custom pricing set by the doctor
+    - Total price is calculated and shown to patient before booking
     
     Notes:
     - scheduled_time is optional (providers manage their own schedules)
@@ -218,6 +346,15 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
     scheduled_time = serializers.TimeField(required=False, allow_null=True)
     duration_minutes = serializers.IntegerField(required=False, allow_null=True, min_value=5)
     
+    # Multiple services selection (IDs)
+    service_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        allow_empty=True,
+        write_only=True,
+        help_text='List of service IDs to include in this appointment'
+    )
+    
     class Meta:
         model = Appointment
         fields = [
@@ -225,6 +362,7 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
             'patient_user',
             'patient_record',
             'service',
+            'service_ids',  # Added for multi-service selection
             'scheduled_date',
             'scheduled_time',
             'duration_minutes',
@@ -243,6 +381,7 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
         patient_user = attrs.get('patient_user')
         patient_record = attrs.get('patient_record')
         provider = attrs.get('provider')
+        service_ids = attrs.get('service_ids', [])
         
         # If user is a patient, automatically set patient_user
         if user and hasattr(user, 'role') and user.role == 'PATIENT':
@@ -259,6 +398,26 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'patient_user': 'Cannot specify both patient_user and patient_record.'
             })
+        
+        # Validate services belong to this provider
+        if service_ids:
+            from services.models import Service
+            services = Service.objects.filter(id__in=service_ids)
+            
+            if services.count() != len(service_ids):
+                raise serializers.ValidationError({
+                    'service_ids': 'One or more service IDs are invalid.'
+                })
+            
+            # Check all services belong to the provider
+            for service in services:
+                if service.provider != provider:
+                    raise serializers.ValidationError({
+                        'service_ids': f'Service "{service.name}" does not belong to the selected provider.'
+                    })
+            
+            # Store services for later
+            attrs['_services'] = list(services)
         
         # Validate scheduling
         scheduled_date = attrs.get('scheduled_date')
@@ -307,7 +466,7 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
                 
                 if existing_count >= daily_limit:
                     raise serializers.ValidationError({
-                        'scheduled_date': f'This provider has reached their daily appointment limit ({daily_limit}) for this date.'
+                        'scheduled_date': f'This provider has reached their daily appointment limit ({daily_limit}) for this date. Please choose another date.'
                     })
         
         # Validate provider availability and check for double-booking (only if time is provided)
@@ -332,6 +491,10 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         user = request.user if request else None
         
+        # Extract services before creating appointment
+        services = validated_data.pop('_services', [])
+        validated_data.pop('service_ids', None)  # Remove service_ids from validated_data
+        
         if user:
             validated_data['created_by'] = user
             
@@ -343,7 +506,24 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
             else:
                 validated_data['created_by_role'] = CreatedByRole.PATIENT
         
-        return super().create(validated_data)
+        # Create appointment
+        appointment = super().create(validated_data)
+        
+        # Add selected services to appointment
+        if services:
+            from appointments.models import AppointmentService
+            appointment_services = [
+                AppointmentService(appointment=appointment, service=service)
+                for service in services
+            ]
+            AppointmentService.objects.bulk_create(appointment_services)
+            
+            # Also set the primary service to the first selected service if not already set
+            if not appointment.service and services:
+                appointment.service = services[0]
+                appointment.save(update_fields=['service'])
+        
+        return appointment
 
 
 class AppointmentUpdateSerializer(serializers.ModelSerializer):

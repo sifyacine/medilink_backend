@@ -1,868 +1,425 @@
+# notifications/services.py
 """
-Services for the Notifications app.
+Unified FCM Notification Service
 
-Provides:
-- FCMService: Firebase Cloud Messaging for push notifications (mobile + web)
-- NotificationService: Notification management with WebSocket broadcast
-- WebSocketBroadcaster: Real-time WebSocket notification delivery
+This module provides a clean, unified interface for sending push notifications
+via Firebase Cloud Messaging (FCM). It uses the DeviceToken model to retrieve
+user tokens and handles token cleanup automatically.
+
+NO WEBSOCKETS - FCM ONLY
+
+Usage:
+    from notifications.services import NotificationService
+    
+    # Send to a single user
+    NotificationService.send_to_user(
+        user=user_instance,
+        title="Hello",
+        body="World",
+        data={'key': 'value'}
+    )
+    
+    # Send to multiple users
+    NotificationService.send_to_users(
+        users=[user1, user2],
+        title="Announcement",
+        body="New feature available!"
+    )
+    
+    # Create notification (stores in DB + sends FCM push)
+    NotificationService.create_notification(
+        user=user_instance,
+        title="Hello",
+        body="World",
+    )
 """
+
+from firebase_admin import messaging
+from firebase_admin.exceptions import FirebaseError
+from django.contrib.auth import get_user_model
 import logging
-from typing import Optional, List, Dict, Any
-from django.conf import settings
-from django.utils import timezone
-from django.db import transaction
-from django.contrib.contenttypes.models import ContentType
-from asgiref.sync import async_to_sync
+
+from .models import DeviceToken
 
 logger = logging.getLogger(__name__)
-
-
-class FCMService:
-    """
-    Firebase Cloud Messaging service for push notifications.
-    """
-    _initialized = False
-    _firebase_app = None
-    
-    @classmethod
-    def initialize(cls):
-        """Initialize Firebase Admin SDK."""
-        if cls._initialized:
-            return True
-        
-        try:
-            import firebase_admin
-            from firebase_admin import credentials
-            import os
-            
-            # Get credentials path from settings or environment
-            creds_path = getattr(settings, 'FIREBASE_CREDENTIALS_PATH', None)
-            if not creds_path:
-                creds_path = os.environ.get('FIREBASE_CREDENTIALS_PATH')
-            
-            if not creds_path:
-                logger.warning(
-                    'Firebase credentials path not configured. '
-                    'Set FIREBASE_CREDENTIALS_PATH in settings or environment.'
-                )
-                return False
-            
-            if not os.path.exists(creds_path):
-                logger.error(f'Firebase credentials file not found: {creds_path}')
-                return False
-            
-            cred = credentials.Certificate(creds_path)
-            cls._firebase_app = firebase_admin.initialize_app(cred)
-            cls._initialized = True
-            logger.info('Firebase Admin SDK initialized successfully.')
-            return True
-            
-        except ImportError:
-            logger.warning('firebase-admin package not installed.')
-            return False
-        except Exception as e:
-            logger.error(f'Failed to initialize Firebase: {e}')
-            return False
-    
-    @classmethod
-    def is_available(cls) -> bool:
-        """Check if FCM is available and initialized."""
-        if not cls._initialized:
-            cls.initialize()
-        return cls._initialized
-    
-    @classmethod
-    def send_to_token(
-        cls,
-        token: str,
-        title: str,
-        body: str,
-        data: Optional[Dict[str, str]] = None,
-        image_url: Optional[str] = None,
-        priority: str = 'high'
-    ) -> Optional[str]:
-        """
-        Send push notification to a single device token.
-        
-        Returns:
-            Message ID on success, None on failure
-        """
-        if not cls.is_available():
-            logger.warning('FCM not available, skipping push notification.')
-            return None
-        
-        try:
-            from firebase_admin import messaging
-            
-            # Build notification
-            notification = messaging.Notification(
-                title=title,
-                body=body,
-                image=image_url
-            )
-            
-            # Build Android config
-            android = messaging.AndroidConfig(
-                priority=priority,
-                notification=messaging.AndroidNotification(
-                    icon='notification_icon',
-                    color='#4A90A4',
-                    sound='default',
-                    click_action='FLUTTER_NOTIFICATION_CLICK'
-                )
-            )
-            
-            # Build APNS config for iOS
-            apns = messaging.APNSConfig(
-                payload=messaging.APNSPayload(
-                    aps=messaging.Aps(
-                        sound='default',
-                        badge=1,
-                    )
-                )
-            )
-            
-            # Build message
-            message = messaging.Message(
-                notification=notification,
-                data=data or {},
-                token=token,
-                android=android,
-                apns=apns,
-            )
-            
-            # Send message
-            response = messaging.send(message)
-            logger.info(f'Push notification sent successfully: {response}')
-            return response
-            
-        except Exception as e:
-            logger.error(f'Failed to send push notification: {e}')
-            return None
-    
-    @classmethod
-    def send_to_tokens(
-        cls,
-        tokens: List[str],
-        title: str,
-        body: str,
-        data: Optional[Dict[str, str]] = None,
-        image_url: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Send push notification to multiple device tokens.
-        
-        Returns:
-            Dict with success_count, failure_count, and failed_tokens
-        """
-        if not cls.is_available():
-            logger.warning('FCM not available, skipping push notifications.')
-            return {'success_count': 0, 'failure_count': len(tokens), 'failed_tokens': tokens}
-        
-        if not tokens:
-            return {'success_count': 0, 'failure_count': 0, 'failed_tokens': []}
-        
-        try:
-            from firebase_admin import messaging
-            
-            # Build notification
-            notification = messaging.Notification(
-                title=title,
-                body=body,
-                image=image_url
-            )
-            
-            # Build multicast message
-            message = messaging.MulticastMessage(
-                notification=notification,
-                data=data or {},
-                tokens=tokens,
-            )
-            
-            # Send messages
-            response = messaging.send_each_for_multicast(message)
-            
-            # Process results
-            failed_tokens = []
-            for idx, result in enumerate(response.responses):
-                if not result.success:
-                    failed_tokens.append(tokens[idx])
-                    logger.warning(
-                        f'Failed to send to token {tokens[idx][:20]}...: {result.exception}'
-                    )
-            
-            logger.info(
-                f'Multicast sent: {response.success_count} success, '
-                f'{response.failure_count} failures'
-            )
-            
-            return {
-                'success_count': response.success_count,
-                'failure_count': response.failure_count,
-                'failed_tokens': failed_tokens,
-            }
-            
-        except Exception as e:
-            logger.error(f'Failed to send multicast notification: {e}')
-            return {
-                'success_count': 0,
-                'failure_count': len(tokens),
-                'failed_tokens': tokens,
-            }
-    
-    @classmethod
-    def send_to_topic(
-        cls,
-        topic: str,
-        title: str,
-        body: str,
-        data: Optional[Dict[str, str]] = None,
-    ) -> Optional[str]:
-        """Send push notification to a topic."""
-        if not cls.is_available():
-            return None
-        
-        try:
-            from firebase_admin import messaging
-            
-            message = messaging.Message(
-                notification=messaging.Notification(title=title, body=body),
-                data=data or {},
-                topic=topic,
-            )
-            
-            response = messaging.send(message)
-            logger.info(f'Topic notification sent to {topic}: {response}')
-            return response
-            
-        except Exception as e:
-            logger.error(f'Failed to send topic notification: {e}')
-            return None
-    
-    @classmethod
-    def send_web_push(
-        cls,
-        token: str,
-        title: str,
-        body: str,
-        data: Optional[Dict[str, str]] = None,
-        icon_url: Optional[str] = None,
-        click_action: Optional[str] = None,
-    ) -> Optional[str]:
-        """
-        Send Web Push notification via FCM.
-        
-        Specifically configured for browser push notifications.
-        
-        Args:
-            token: Browser FCM token
-            title: Notification title
-            body: Notification body
-            data: Custom data payload
-            icon_url: Notification icon URL
-            click_action: URL to open when notification is clicked
-        
-        Returns:
-            Message ID on success, None on failure
-        """
-        if not cls.is_available():
-            return None
-        
-        try:
-            from firebase_admin import messaging
-            
-            # Web-specific configuration
-            webpush_config = messaging.WebpushConfig(
-                notification=messaging.WebpushNotification(
-                    title=title,
-                    body=body,
-                    icon=icon_url or '/static/icons/notification-icon.png',
-                ),
-                fcm_options=messaging.WebpushFCMOptions(
-                    link=click_action or '/'
-                )
-            )
-            
-            message = messaging.Message(
-                data=data or {},
-                token=token,
-                webpush=webpush_config,
-            )
-            
-            response = messaging.send(message)
-            logger.info(f'Web push notification sent: {response}')
-            return response
-            
-        except Exception as e:
-            logger.error(f'Failed to send web push: {e}')
-            return None
-
-
-class WebSocketBroadcaster:
-    """
-    Service for broadcasting messages via WebSocket using Django Channels.
-    
-    Provides real-time notification delivery to connected clients.
-    """
-    
-    @classmethod
-    def _get_channel_layer(cls):
-        """Get the Channels layer."""
-        try:
-            from channels.layers import get_channel_layer
-            return get_channel_layer()
-        except ImportError:
-            logger.warning('Django Channels not installed')
-            return None
-    
-    @classmethod
-    def send_to_user(cls, user_id, message_type: str, data: Dict[str, Any]):
-        """
-        Send message to a specific user via WebSocket.
-        
-        Args:
-            user_id: User ID to send to
-            message_type: Type of message (e.g., 'notification', 'appointment_updated')
-            data: Message data
-        """
-        channel_layer = cls._get_channel_layer()
-        if not channel_layer:
-            return
-        
-        group_name = f'user_{user_id}_notifications'
-        
-        try:
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {
-                    'type': message_type,
-                    **data
-                }
-            )
-            logger.debug(f'WebSocket message sent to user {user_id}')
-        except Exception as e:
-            logger.error(f'Failed to send WebSocket message to user {user_id}: {e}')
-    
-    @classmethod
-    def send_to_provider(cls, provider_id, message_type: str, data: Dict[str, Any]):
-        """
-        Send message to a provider (doctor/nurse) via appointment WebSocket.
-        
-        Args:
-            provider_id: Provider ID to send to
-            message_type: Type of message (e.g., 'new_appointment')
-            data: Message data
-        """
-        channel_layer = cls._get_channel_layer()
-        if not channel_layer:
-            return
-        
-        group_name = f'provider_{provider_id}_appointments'
-        
-        try:
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {
-                    'type': message_type,
-                    **data
-                }
-            )
-            logger.debug(f'WebSocket message sent to provider {provider_id}')
-        except Exception as e:
-            logger.error(f'Failed to send WebSocket message to provider {provider_id}: {e}')
-    
-    @classmethod
-    def send_to_patient(cls, user_id, message_type: str, data: Dict[str, Any]):
-        """
-        Send message to a patient via appointment WebSocket.
-        
-        Args:
-            user_id: User ID of the patient
-            message_type: Type of message
-            data: Message data
-        """
-        channel_layer = cls._get_channel_layer()
-        if not channel_layer:
-            return
-        
-        group_name = f'patient_{user_id}_appointments'
-        
-        try:
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {
-                    'type': message_type,
-                    **data
-                }
-            )
-            logger.debug(f'WebSocket message sent to patient {user_id}')
-        except Exception as e:
-            logger.error(f'Failed to send WebSocket message to patient {user_id}: {e}')
-    
-    @classmethod
-    def send_to_role(cls, role: str, message_type: str, data: Dict[str, Any]):
-        """
-        Broadcast message to all users with a specific role.
-        
-        Args:
-            role: Role name (e.g., 'PROVIDER', 'PATIENT', 'ADMIN')
-            message_type: Type of message
-            data: Message data
-        """
-        channel_layer = cls._get_channel_layer()
-        if not channel_layer:
-            return
-        
-        group_name = f'role_{role}_notifications'
-        
-        try:
-            async_to_sync(channel_layer.group_send)(
-                group_name,
-                {
-                    'type': message_type,
-                    **data
-                }
-            )
-            logger.debug(f'WebSocket message broadcast to role {role}')
-        except Exception as e:
-            logger.error(f'Failed to broadcast WebSocket message to role {role}: {e}')
-    
-    @classmethod
-    def broadcast_notification(cls, user_id, notification_data: Dict[str, Any]):
-        """
-        Broadcast a new notification to user's WebSocket connections.
-        
-        Args:
-            user_id: User ID to notify
-            notification_data: Serialized notification data
-        """
-        cls.send_to_user(user_id, 'notification', {'notification': notification_data})
-    
-    @classmethod
-    def broadcast_appointment_event(
-        cls,
-        provider_id,
-        patient_user_id,
-        event_type: str,
-        appointment_data: Dict[str, Any],
-        message: str = None
-    ):
-        """
-        Broadcast an appointment event to both provider and patient.
-        
-        Args:
-            provider_id: Provider ID
-            patient_user_id: Patient's user ID (can be None)
-            event_type: Event type ('new_appointment', 'appointment_updated', etc.)
-            appointment_data: Serialized appointment data
-            message: Optional message to include
-        """
-        event_data = {
-            'appointment': appointment_data,
-            'message': message,
-        }
-        
-        # Send to provider
-        cls.send_to_provider(provider_id, event_type, event_data)
-        
-        # Send to patient if they have a user account
-        if patient_user_id:
-            cls.send_to_patient(patient_user_id, event_type, event_data)
+User = get_user_model()
 
 
 class NotificationService:
     """
-    Service for managing notifications with WebSocket and FCM integration.
+    Centralized service for sending FCM push notifications.
+    
+    All notification types use this service under the hood.
+    It handles:
+    - Fetching user device tokens from the database
+    - Sending via FCM
+    - Automatic cleanup of invalid/expired tokens
+    
+    NO WEBSOCKETS - FCM ONLY
     """
     
-    @classmethod
-    def create_notification(
-        cls,
-        recipient,
-        title: str,
-        message: str,
-        notification_type: str = 'GENERAL',
-        category: str = 'SYSTEM',
-        priority: str = 'NORMAL',
-        related_object=None,
-        action_url: str = '',
-        data: Optional[Dict] = None,
-        image_url: Optional[str] = None,
-        send_push: bool = True,
-        send_websocket: bool = True,
-        expires_at=None,
-    ):
-        """
-        Create a notification with push and WebSocket delivery.
-        
-        Args:
-            recipient: User to notify
-            title: Notification title
-            message: Notification body
-            notification_type: Type from NotificationType
-            category: Category from NotificationCategory
-            priority: Priority from NotificationPriority
-            related_object: Optional related model instance
-            action_url: URL/route for navigation
-            data: Additional JSON data
-            image_url: Image URL for rich notification
-            send_push: Whether to send FCM push notification
-            send_websocket: Whether to broadcast via WebSocket
-            expires_at: When notification expires
-        
-        Returns:
-            Created Notification instance
-        """
-        from .models import Notification, NotificationPreference
-        
-        # Build notification data
-        notification_data = {
-            'recipient': recipient,
-            'title': title,
-            'message': message,
-            'notification_type': notification_type,
-            'category': category,
-            'priority': priority,
-            'action_url': action_url,
-            'data': data or {},
-            'image_url': image_url,
-            'expires_at': expires_at,
-        }
-        
-        # Handle related object
-        if related_object:
-            notification_data['related_content_type'] = ContentType.objects.get_for_model(
-                related_object
-            )
-            notification_data['related_object_id'] = str(related_object.pk)
-        
-        # Create notification
-        notification = Notification.objects.create(**notification_data)
-        
-        # Broadcast via WebSocket for real-time delivery
-        if send_websocket:
-            cls._broadcast_via_websocket(notification)
-        
-        # Send FCM push notification if enabled
-        if send_push:
-            cls._send_push_for_notification(notification)
-        
-        return notification
+    # ============================================
+    # CORE FCM METHODS
+    # ============================================
     
-    @classmethod
-    def create_for_object(
-        cls,
-        recipient,
-        title: str,
-        message: str,
-        related_object,
-        notification_type: str = 'GENERAL',
-        priority: str = 'NORMAL',
-        action_url: str = '',
-        data: Optional[Dict] = None,
-        send_push: bool = True,
-        send_websocket: bool = True,
-    ):
+    @staticmethod
+    def send_to_user(user, title: str, body: str, image_url: str = None, data: dict = None) -> bool:
         """
-        Create a notification linked to a specific object.
-        
-        Convenience method for creating notifications with related objects.
-        Auto-determines category based on notification type.
+        Send a notification to all active devices of a specific user.
         
         Args:
-            recipient: User to notify
+            user: User instance to send notification to
             title: Notification title
-            message: Notification body
-            related_object: Related model instance (Appointment, etc.)
-            notification_type: Type from NotificationType
-            priority: Priority from NotificationPriority
-            action_url: URL/route for navigation
-            data: Additional JSON data
-            send_push: Whether to send FCM push notification
-            send_websocket: Whether to broadcast via WebSocket
-        
+            body: Notification body text
+            image_url: Optional image URL for rich notifications
+            data: Optional data payload (must be dict with string values)
+            
         Returns:
-            Created Notification instance
+            bool: True if at least one message was sent successfully
         """
-        from .models import NotificationType as NT, NotificationCategory
+        tokens = list(DeviceToken.objects.filter(
+            user=user,
+            is_active=True
+        ).values_list('token', flat=True))
         
-        # Auto-determine category from notification type
-        type_to_category = {
-            NT.APPOINTMENT_CREATED: NotificationCategory.APPOINTMENTS,
-            NT.APPOINTMENT_CONFIRMED: NotificationCategory.APPOINTMENTS,
-            NT.APPOINTMENT_CANCELLED: NotificationCategory.APPOINTMENTS,
-            NT.APPOINTMENT_UPDATED: NotificationCategory.APPOINTMENTS,
-            NT.APPOINTMENT_REMINDER: NotificationCategory.REMINDERS,
-            NT.APPOINTMENT_COMPLETED: NotificationCategory.APPOINTMENTS,
-            NT.ACCOUNT_VERIFIED: NotificationCategory.ACCOUNT,
-            NT.ACCOUNT_SUSPENDED: NotificationCategory.ACCOUNT,
-            NT.PROVIDER_APPROVED: NotificationCategory.ACCOUNT,
-            NT.PROVIDER_REFUSED: NotificationCategory.ACCOUNT,
-            NT.PATIENT_RECORD_CREATED: NotificationCategory.ACCOUNT,
-            NT.PATIENT_ACCOUNT_LINKED: NotificationCategory.ACCOUNT,
-            NT.SYSTEM_ANNOUNCEMENT: NotificationCategory.SYSTEM,
-            NT.SYSTEM_MAINTENANCE: NotificationCategory.SYSTEM,
-            NT.MESSAGE: NotificationCategory.MESSAGES,
-            NT.GENERAL: NotificationCategory.SYSTEM,
-        }
+        if not tokens:
+            logger.debug(f"No active tokens found for user {user.id}")
+            return False
         
-        category = type_to_category.get(notification_type, NotificationCategory.SYSTEM)
-        
-        return cls.create_notification(
-            recipient=recipient,
+        return NotificationService._send_to_tokens(
+            tokens=tokens,
             title=title,
-            message=message,
-            notification_type=notification_type,
-            category=category,
-            priority=priority,
-            related_object=related_object,
-            action_url=action_url,
-            data=data,
-            send_push=send_push,
-            send_websocket=send_websocket,
+            body=body,
+            image_url=image_url,
+            data=data
         )
     
-    @classmethod
-    def _broadcast_via_websocket(cls, notification):
-        """Broadcast notification via WebSocket for real-time delivery."""
-        try:
-            # Serialize notification for WebSocket
-            notification_data = {
-                'id': str(notification.id),
-                'title': notification.title,
-                'message': notification.message,
-                'type': notification.notification_type,
-                'category': notification.category,
-                'priority': notification.priority,
-                'action_url': notification.action_url,
-                'is_read': notification.is_read,
-                'created_at': notification.created_at.isoformat(),
-                'data': notification.data,
-            }
-            
-            if notification.image_url:
-                notification_data['image_url'] = notification.image_url
-            
-            if notification.related_object_id:
-                notification_data['related_object_id'] = notification.related_object_id
-                notification_data['related_type'] = notification.related_content_type.model if notification.related_content_type else None
-            
-            # Broadcast to user
-            WebSocketBroadcaster.broadcast_notification(
-                user_id=notification.recipient_id,
-                notification_data=notification_data
-            )
-            
-        except Exception as e:
-            logger.error(f'Failed to broadcast notification via WebSocket: {e}')
-    
-    @classmethod
-    def create_bulk_notifications(
-        cls,
-        recipients: List,
-        title: str,
-        message: str,
-        notification_type: str = 'GENERAL',
-        category: str = 'SYSTEM',
-        priority: str = 'NORMAL',
-        action_url: str = '',
-        data: Optional[Dict] = None,
-        send_push: bool = True,
-    ) -> List:
+    @staticmethod
+    def send_to_users(users, title: str, body: str, image_url: str = None, data: dict = None) -> bool:
         """
-        Create notifications for multiple recipients.
+        Send a notification to multiple users.
         
+        Args:
+            users: QuerySet or list of User instances
+            title: Notification title
+            body: Notification body text
+            image_url: Optional image URL
+            data: Optional data payload
+            
         Returns:
-            List of created notifications
+            bool: True if at least one message was sent successfully
         """
-        from .models import Notification
+        # Get all tokens for the given users
+        tokens = list(DeviceToken.objects.filter(
+            user__in=users,
+            is_active=True
+        ).values_list('token', flat=True))
         
-        notifications = []
-        with transaction.atomic():
-            for recipient in recipients:
-                notification = Notification(
-                    recipient=recipient,
-                    title=title,
-                    message=message,
-                    notification_type=notification_type,
-                    category=category,
-                    priority=priority,
-                    action_url=action_url,
-                    data=data or {},
-                )
-                notifications.append(notification)
+        if not tokens:
+            logger.debug(f"No active tokens found for users")
+            return False
+        
+        return NotificationService._send_to_tokens(
+            tokens=tokens,
+            title=title,
+            body=body,
+            image_url=image_url,
+            data=data
+        )
+    
+    @staticmethod
+    def send_to_topic(topic: str, title: str, body: str, image_url: str = None, data: dict = None) -> bool:
+        """
+        Send a notification to a topic (all subscribers).
+        
+        Args:
+            topic: Topic name (e.g., 'news', 'promotions')
+            title: Notification title
+            body: Notification body text
+            image_url: Optional image URL
+            data: Optional data payload
             
-            Notification.objects.bulk_create(notifications)
+        Returns:
+            bool: True if message was sent successfully
+        """
+        # Ensure data values are strings (FCM requirement)
+        safe_data = NotificationService._prepare_data(data)
         
-        # Send push notifications
-        if send_push and notifications:
-            cls._send_bulk_push(notifications, title, message, data)
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body,
+                image=image_url,
+            ),
+            data=safe_data,
+            topic=topic,
+        )
         
-        return notifications
-    
-    @classmethod
-    def _send_push_for_notification(cls, notification):
-        """Send push notification for a single notification."""
-        from .models import DeviceToken, NotificationPreference
-        
-        recipient = notification.recipient
-        
-        # Check user preferences
         try:
-            prefs = recipient.notification_preferences
-            if not prefs.should_send_push(notification.category):
-                logger.info(f'Push disabled for category {notification.category} for user {recipient.id}')
-                return
-            if prefs.is_quiet_hours():
-                logger.info(f'Quiet hours active for user {recipient.id}')
-                return
-        except NotificationPreference.DoesNotExist:
-            pass
-        
-        # Get active device tokens
-        tokens = list(
-            DeviceToken.objects.filter(
-                user=recipient,
-                is_active=True
-            ).values_list('token', flat=True)
-        )
-        
-        if not tokens:
-            logger.info(f'No active device tokens for user {recipient.id}')
-            return
-        
-        # Prepare push data
-        push_data = {
-            'notification_id': str(notification.id),
-            'type': notification.notification_type,
-            'category': notification.category,
-        }
-        if notification.action_url:
-            push_data['action_url'] = notification.action_url
-        if notification.data:
-            push_data.update({k: str(v) for k, v in notification.data.items()})
-        
-        # Send push
-        result = FCMService.send_to_tokens(
-            tokens=tokens,
-            title=notification.title,
-            body=notification.message,
-            data=push_data,
-            image_url=notification.image_url,
-        )
-        
-        # Update push status
-        if result['success_count'] > 0:
-            notification.push_sent = True
-            notification.push_sent_at = timezone.now()
-            notification.save(update_fields=['push_sent', 'push_sent_at', 'updated_at'])
-        
-        # Handle failed tokens
-        if result['failed_tokens']:
-            cls._handle_failed_tokens(result['failed_tokens'])
+            response = messaging.send(message)
+            logger.info(f"✅ Sent message to topic '{topic}': {response}")
+            return True
+        except FirebaseError as e:
+            logger.error(f"❌ Firebase error sending to topic '{topic}': {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Error sending to topic '{topic}': {e}")
+            return False
     
-    @classmethod
-    def _send_bulk_push(cls, notifications, title: str, message: str, data: Dict = None):
-        """Send push for bulk notifications."""
-        from .models import DeviceToken
+    # ============================================
+    # COMPATIBILITY METHODS (For other apps)
+    # These provide a simple interface that other apps use
+    # ============================================
+    
+    @staticmethod
+    def create_notification(user=None, recipient=None, title: str = '', body: str = '', 
+                           message: str = '', notification_type: str = None, 
+                           data: dict = None, **kwargs) -> bool:
+        """
+        Create and send a notification to a user.
         
-        if not notifications:
-            return
+        This is a compatibility method for other apps that expect to create
+        notification records. In FCM-only mode, this just sends the push.
         
-        # Collect all recipient tokens
-        recipient_ids = [n.recipient_id for n in notifications]
+        Args:
+            user: User to notify (alias for recipient)
+            recipient: User to notify
+            title: Notification title
+            body: Notification body (message is an alias)
+            message: Alias for body
+            notification_type: Type of notification (included in data)
+            data: Additional data payload
+            **kwargs: Additional arguments (ignored for FCM-only)
+            
+        Returns:
+            bool: True if notification was sent successfully
+        """
+        target_user = user or recipient
+        if not target_user:
+            logger.warning("No user specified for notification")
+            return False
         
-        tokens = list(
-            DeviceToken.objects.filter(
-                user_id__in=recipient_ids,
-                is_active=True
-            ).values_list('token', flat=True)
+        # Use body or message (whichever is provided)
+        notification_body = body or message
+        
+        # Build data payload
+        notification_data = data.copy() if data else {}
+        if notification_type:
+            notification_data['type'] = str(notification_type)
+        
+        return NotificationService.send_to_user(
+            user=target_user,
+            title=title,
+            body=notification_body,
+            data=notification_data
         )
+    
+    @staticmethod
+    def create_for_object(recipient, title: str, message: str, related_object=None,
+                         notification_type=None, priority=None, action_url: str = None,
+                         data: dict = None, **kwargs) -> bool:
+        """
+        Create a notification related to a specific object.
         
-        if not tokens:
-            return
+        This is a compatibility method for apps like appointments that create
+        notifications linked to specific objects.
         
-        push_data = {'type': 'BULK', 'category': 'SYSTEM'}
-        if data:
-            push_data.update({k: str(v) for k, v in data.items()})
+        In FCM-only mode, this sends the push notification with object info in data.
         
-        result = FCMService.send_to_tokens(
-            tokens=tokens,
+        Args:
+            recipient: User to notify
+            title: Notification title
+            message: Notification body
+            related_object: Related Django model instance (optional)
+            notification_type: Type of notification
+            priority: Priority level (included in data)
+            action_url: URL to navigate to (included in data)
+            data: Additional data payload
+            
+        Returns:
+            bool: True if notification was sent successfully
+        """
+        if not recipient:
+            logger.warning("No recipient specified for notification")
+            return False
+        
+        # Build data payload
+        notification_data = data.copy() if data else {}
+        
+        if notification_type:
+            notification_data['type'] = str(notification_type)
+        
+        if priority:
+            notification_data['priority'] = str(priority)
+        
+        if action_url:
+            notification_data['action_url'] = action_url
+        
+        # Add related object info if provided
+        if related_object:
+            notification_data['object_type'] = related_object.__class__.__name__
+            notification_data['object_id'] = str(related_object.pk)
+        
+        return NotificationService.send_to_user(
+            user=recipient,
             title=title,
             body=message,
-            data=push_data,
+            data=notification_data
         )
-        
-        if result['failed_tokens']:
-            cls._handle_failed_tokens(result['failed_tokens'])
     
-    @classmethod
-    def _handle_failed_tokens(cls, failed_tokens: List[str]):
-        """Handle failed device tokens by incrementing failure count."""
-        from .models import DeviceToken
+    # ============================================
+    # INTERNAL METHODS
+    # ============================================
+    
+    @staticmethod
+    def _send_to_tokens(tokens: list, title: str, body: str, image_url: str = None, data: dict = None) -> bool:
+        """
+        Internal method to send notifications to a list of FCM tokens.
         
-        for token in failed_tokens:
+        Handles:
+        - Batching (FCM allows max 500 tokens per request)
+        - Token cleanup for failed tokens
+        """
+        if not tokens:
+            return False
+        
+        # Ensure data values are strings (FCM requirement)
+        safe_data = NotificationService._prepare_data(data)
+        
+        # FCM limits to 500 tokens per multicast
+        BATCH_SIZE = 500
+        total_success = 0
+        total_failure = 0
+        failed_tokens = []
+        
+        for i in range(0, len(tokens), BATCH_SIZE):
+            batch_tokens = tokens[i:i + BATCH_SIZE]
+            
+            message = messaging.MulticastMessage(
+                notification=messaging.Notification(
+                    title=title,
+                    body=body,
+                    image=image_url,
+                ),
+                data=safe_data,
+                tokens=batch_tokens,
+            )
+            
             try:
-                device_token = DeviceToken.objects.get(token=token)
-                device_token.increment_failure()
-            except DeviceToken.DoesNotExist:
-                pass
+                response = messaging.send_each_for_multicast(message)
+                total_success += response.success_count
+                total_failure += response.failure_count
+                
+                # Collect failed tokens for cleanup
+                if response.failure_count > 0:
+                    for idx, resp in enumerate(response.responses):
+                        if not resp.success:
+                            failed_tokens.append(batch_tokens[idx])
+                            
+            except FirebaseError as e:
+                logger.error(f"❌ Firebase error in batch: {e}")
+                total_failure += len(batch_tokens)
+            except Exception as e:
+                logger.error(f"❌ Error sending batch: {e}")
+                total_failure += len(batch_tokens)
+        
+        # Cleanup failed tokens
+        if failed_tokens:
+            cleanup_count = DeviceToken.objects.filter(
+                token__in=failed_tokens
+            ).update(is_active=False)
+            logger.info(f"🧹 Deactivated {cleanup_count} invalid tokens")
+        
+        logger.info(f"📬 Notification sent: {total_success} success, {total_failure} failed")
+        return total_success > 0
     
-    @classmethod
-    def mark_as_read(cls, user, notification_ids: List[str] = None) -> int:
+    @staticmethod
+    def _prepare_data(data: dict) -> dict:
         """
-        Mark notifications as read.
-        
-        Args:
-            user: User whose notifications to mark
-            notification_ids: Optional list of notification IDs. If None, marks all.
-        
-        Returns:
-            Number of notifications marked as read
+        Prepare data payload for FCM.
+        FCM requires all data values to be strings.
         """
-        from .models import Notification
+        if not data:
+            return {}
         
-        queryset = Notification.objects.filter(recipient=user, is_read=False)
-        
-        if notification_ids:
-            queryset = queryset.filter(id__in=notification_ids)
-        
-        count = queryset.update(is_read=True, read_at=timezone.now())
-        return count
+        return {str(k): str(v) for k, v in data.items() if v is not None}
+
+
+# ============================================
+# WEBSOCKET BROADCASTER STUB
+# Since you want FCM only, this is a no-op stub
+# Other apps may import this but it won't do anything
+# ============================================
+
+class WebSocketBroadcaster:
+    """
+    Stub class for WebSocket broadcasting.
     
-    @classmethod
-    def delete_old_notifications(cls, days: int = 30) -> int:
-        """Delete notifications older than specified days."""
-        from .models import Notification
-        
-        cutoff = timezone.now() - timezone.timedelta(days=days)
-        deleted, _ = Notification.objects.filter(created_at__lt=cutoff).delete()
-        return deleted
+    Since you're using FCM only (no sockets), this is a no-op.
+    Other apps that import this won't break, but no WebSocket messages will be sent.
+    """
     
-    @classmethod
-    def get_user_stats(cls, user) -> Dict[str, Any]:
-        """Get notification statistics for a user."""
-        from .models import Notification, NotificationCategory, NotificationPriority
-        from django.db.models import Count, Q
-        
-        queryset = Notification.objects.filter(recipient=user)
-        
-        total = queryset.count()
-        unread = queryset.filter(is_read=False).count()
-        
-        # Count by category
-        by_category = {}
-        for category in NotificationCategory.values:
-            by_category[category] = queryset.filter(category=category).count()
-        
-        # Count by priority
-        by_priority = {}
-        for priority in NotificationPriority.values:
-            by_priority[priority] = queryset.filter(priority=priority).count()
-        
-        return {
-            'total': total,
-            'unread': unread,
-            'by_category': by_category,
-            'by_priority': by_priority,
-        }
+    @staticmethod
+    def send_to_provider(provider_id, message_type: str, data: dict) -> None:
+        """No-op: WebSocket disabled (FCM only mode)"""
+        logger.debug(f"WebSocket disabled: would send {message_type} to provider {provider_id}")
+    
+    @staticmethod
+    def send_to_patient(user_id, message_type: str, data: dict) -> None:
+        """No-op: WebSocket disabled (FCM only mode)"""
+        logger.debug(f"WebSocket disabled: would send {message_type} to user {user_id}")
+    
+    @staticmethod
+    def send_to_user(user_id, message_type: str, data: dict) -> None:
+        """No-op: WebSocket disabled (FCM only mode)"""
+        logger.debug(f"WebSocket disabled: would send {message_type} to user {user_id}")
+    
+    @staticmethod
+    def broadcast(channel: str, message_type: str, data: dict) -> None:
+        """No-op: WebSocket disabled (FCM only mode)"""
+        logger.debug(f"WebSocket disabled: would broadcast {message_type} to {channel}")
+
+
+# ============================================
+# Convenience functions for common notifications
+# ============================================
+
+def send_notification(user, title: str, body: str, data: dict = None, image_url: str = None) -> bool:
+    """
+    Convenience function to send a notification to a user.
+    
+    This is the main function you should use throughout the app.
+    """
+    return NotificationService.send_to_user(
+        user=user,
+        title=title,
+        body=body,
+        image_url=image_url,
+        data=data
+    )
+
+
+def send_notification_to_users(users, title: str, body: str, data: dict = None, image_url: str = None) -> bool:
+    """
+    Convenience function to send a notification to multiple users.
+    """
+    return NotificationService.send_to_users(
+        users=users,
+        title=title,
+        body=body,
+        image_url=image_url,
+        data=data
+    )
+
+
+def send_topic_notification(topic: str, title: str, body: str, data: dict = None, image_url: str = None) -> bool:
+    """
+    Convenience function to send a notification to a topic.
+    """
+    return NotificationService.send_to_topic(
+        topic=topic,
+        title=title,
+        body=body,
+        image_url=image_url,
+        data=data
+    )

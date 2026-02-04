@@ -3,8 +3,14 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 
+# Import service worker view for web push notifications
+from notifications.views import service_worker
+
 urlpatterns = [
     path('admin/', admin.site.urls),
+    
+    # Firebase Service Worker (MUST be at root for web push to work)
+    path('firebase-messaging-sw.js', service_worker, name='firebase_service_worker'),
     
     # Authentication endpoints
     path('api/auth/', include('accounts.urls')),

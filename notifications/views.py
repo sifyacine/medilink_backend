@@ -1,326 +1,309 @@
-"""
-Views for the Notifications app.
-"""
-from rest_framework import viewsets, status, filters
-from rest_framework.decorators import action
+from django.http import HttpResponse
+from django.views.decorators.http import require_http_methods
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Count, Q
+import logging
+import os
 
-from .models import (
-    Notification,
-    DeviceToken,
-    NotificationPreference,
-    NotificationCategory,
-    NotificationPriority,
-)
-from .serializers import (
-    NotificationListSerializer,
-    NotificationDetailSerializer,
-    NotificationCreateSerializer,
-    BulkNotificationSerializer,
-    MarkReadSerializer,
-    DeviceTokenSerializer,
-    DeviceTokenRegisterSerializer,
-    NotificationPreferenceSerializer,
-    NotificationStatsSerializer,
-)
-from .services import NotificationService
+from .models import DeviceToken
+
+logger = logging.getLogger(__name__)
 
 
-class NotificationViewSet(viewsets.ModelViewSet):
+def get_firebase_config():
+    """Get Firebase configuration from environment variables"""
+    return {
+        'apiKey': os.environ.get('FIREBASE_API_KEY', ''),
+        'authDomain': os.environ.get('FIREBASE_AUTH_DOMAIN', ''),
+        'projectId': os.environ.get('FIREBASE_PROJECT_ID', ''),
+        'storageBucket': os.environ.get('FIREBASE_STORAGE_BUCKET', ''),
+        'messagingSenderId': os.environ.get('FIREBASE_MESSAGING_SENDER_ID', ''),
+        'appId': os.environ.get('FIREBASE_APP_ID', ''),
+        'measurementId': os.environ.get('FIREBASE_MEASUREMENT_ID', ''),
+        'vapidKey': os.environ.get('FIREBASE_VAPID_KEY', ''),
+    }
+
+
+# ============================================
+# REST API VIEWS (Use these in production)
+# ============================================
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def get_firebase_config_api(request):
     """
-    ViewSet for managing user notifications.
+    Get Firebase configuration for client-side initialization.
     
-    list:
-        Get all notifications for the current user.
-        Supports filtering by is_read, category, priority, and notification_type.
+    This endpoint returns the Firebase config needed for web push notifications.
+    The config is read from environment variables to keep secrets in .env file.
     
-    retrieve:
-        Get a single notification and mark it as read.
-    
-    destroy:
-        Delete a notification.
-    
-    mark_read:
-        Mark one or more notifications as read.
-    
-    mark_all_read:
-        Mark all notifications as read.
-    
-    unread:
-        Get only unread notifications.
-    
-    stats:
-        Get notification statistics.
-    
-    by_category:
-        Get notifications grouped by category.
+    GET /api/notifications/config/
     """
-    permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['is_read', 'category', 'priority', 'notification_type']
-    ordering_fields = ['created_at', 'priority']
-    ordering = ['-created_at']
-    
-    def get_queryset(self):
-        """Filter to only the current user's notifications."""
-        return Notification.objects.filter(
-            recipient=self.request.user
-        ).select_related('related_content_type')
-    
-    def get_serializer_class(self):
-        if self.action == 'list':
-            return NotificationListSerializer
-        elif self.action == 'create':
-            return NotificationCreateSerializer
-        elif self.action == 'mark_read':
-            return MarkReadSerializer
-        elif self.action == 'stats':
-            return NotificationStatsSerializer
-        return NotificationDetailSerializer
-    
-    def retrieve(self, request, *args, **kwargs):
-        """Get notification and auto-mark as read."""
-        instance = self.get_object()
-        instance.mark_as_read()
-        serializer = self.get_serializer(instance)
-        return Response(serializer.data)
-    
-    def create(self, request, *args, **kwargs):
-        """Create notification (admin only)."""
-        if not request.user.is_staff:
-            return Response(
-                {'detail': 'Only staff can create notifications directly.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        return super().create(request, *args, **kwargs)
-    
-    @action(detail=False, methods=['post'])
-    def mark_read(self, request):
-        """
-        Mark specific notifications as read.
-        
-        Request body:
-            notification_ids: List of notification UUIDs (optional)
-            
-        If notification_ids is empty or not provided, marks all as read.
-        """
-        serializer = MarkReadSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        notification_ids = serializer.validated_data.get('notification_ids', [])
-        count = NotificationService.mark_as_read(request.user, notification_ids or None)
-        
-        return Response({
-            'message': f'{count} notification(s) marked as read.',
-            'count': count
-        })
-    
-    @action(detail=False, methods=['post'])
-    def mark_all_read(self, request):
-        """Mark all notifications as read."""
-        count = NotificationService.mark_as_read(request.user)
-        return Response({
-            'message': f'{count} notification(s) marked as read.',
-            'count': count
-        })
-    
-    @action(detail=True, methods=['post'])
-    def mark_unread(self, request, pk=None):
-        """Mark a notification as unread."""
-        notification = self.get_object()
-        notification.mark_as_unread()
-        return Response({'message': 'Notification marked as unread.'})
-    
-    @action(detail=False, methods=['get'])
-    def unread(self, request):
-        """Get only unread notifications."""
-        queryset = self.get_queryset().filter(is_read=False)
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            serializer = NotificationListSerializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        
-        serializer = NotificationListSerializer(queryset, many=True)
-        return Response(serializer.data)
-    
-    @action(detail=False, methods=['get'])
-    def unread_count(self, request):
-        """Get count of unread notifications."""
-        count = Notification.get_unread_count(request.user)
-        return Response({'unread_count': count})
-    
-    @action(detail=False, methods=['get'])
-    def stats(self, request):
-        """Get notification statistics."""
-        stats = NotificationService.get_user_stats(request.user)
-        return Response(stats)
-    
-    @action(detail=False, methods=['get'])
-    def by_category(self, request):
-        """Get notifications grouped by category."""
-        queryset = self.get_queryset()
-        
-        result = {}
-        for category in NotificationCategory.values:
-            notifications = queryset.filter(category=category)[:10]
-            result[category] = {
-                'count': queryset.filter(category=category).count(),
-                'unread': queryset.filter(category=category, is_read=False).count(),
-                'recent': NotificationListSerializer(notifications, many=True).data
-            }
-        
-        return Response(result)
-    
-    @action(detail=False, methods=['delete'])
-    def clear_all(self, request):
-        """Delete all notifications for the user."""
-        count, _ = self.get_queryset().delete()
-        return Response({
-            'message': f'{count} notification(s) deleted.',
-            'count': count
-        })
-    
-    @action(detail=False, methods=['delete'])
-    def clear_read(self, request):
-        """Delete all read notifications."""
-        count, _ = self.get_queryset().filter(is_read=True).delete()
-        return Response({
-            'message': f'{count} read notification(s) deleted.',
-            'count': count
-        })
+    config = get_firebase_config()
+    return Response({
+        'firebase_config': {
+            'apiKey': config['apiKey'],
+            'authDomain': config['authDomain'],
+            'projectId': config['projectId'],
+            'storageBucket': config['storageBucket'],
+            'messagingSenderId': config['messagingSenderId'],
+            'appId': config['appId'],
+            'measurementId': config['measurementId'],
+        },
+        'vapid_key': config['vapidKey'],
+    })
 
 
-class DeviceTokenViewSet(viewsets.ModelViewSet):
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def register_device_api(request):
     """
-    ViewSet for managing device tokens for push notifications.
+    Register a device token for push notifications.
     
-    list:
-        Get all device tokens for the current user.
-    
-    create:
-        Register a new device token.
-    
-    destroy:
-        Unregister a device token.
-    
-    register:
-        Simplified endpoint to register a device token.
+    POST /notifications/api/register/
+    {
+        "token": "fcm_device_token_here",
+        "device_type": "android" | "ios" | "web"
+    }
     """
-    permission_classes = [IsAuthenticated]
-    serializer_class = DeviceTokenSerializer
+    token = request.data.get('token')
+    device_type = request.data.get('device_type', 'android')
     
-    def get_queryset(self):
-        return DeviceToken.objects.filter(user=self.request.user)
+    if not token:
+        return Response(
+            {'error': 'Token is required'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
     
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+    if device_type not in ['android', 'ios', 'web']:
+        return Response(
+            {'error': 'device_type must be android, ios, or web'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
     
-    @action(detail=False, methods=['post'])
-    def register(self, request):
-        """
-        Register a device token for push notifications.
-        
-        Request body:
-            token: FCM device token (required)
-            device_type: 'android', 'ios', or 'web' (required)
-            device_name: Device name (optional)
-            device_id: Unique device identifier (optional)
-            app_version: App version (optional)
-        """
-        serializer = DeviceTokenRegisterSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        token = serializer.validated_data['token']
-        
-        # Update or create device token
+    try:
+        # Update or create the device token
         device_token, created = DeviceToken.objects.update_or_create(
             token=token,
             defaults={
                 'user': request.user,
-                'device_type': serializer.validated_data['device_type'],
-                'device_name': serializer.validated_data.get('device_name', ''),
-                'device_id': serializer.validated_data.get('device_id', ''),
-                'app_version': serializer.validated_data.get('app_version', ''),
+                'device_type': device_type,
                 'is_active': True,
-                'failure_count': 0,
             }
         )
         
+        # If token exists but for different user, reassign it
+        if not created and device_token.user != request.user:
+            device_token.user = request.user
+            device_token.is_active = True
+            device_token.save()
+        
+        logger.info(f"✅ Device token {'created' if created else 'updated'} for user {request.user.id}")
+        
         return Response({
-            'id': str(device_token.id),
-            'message': 'Device registered successfully.' if created else 'Device token updated.',
-            'created': created
+            'success': True,
+            'message': f'Token {"registered" if created else "updated"} successfully',
+            'device_id': device_token.id,
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"❌ Error registering device token: {e}")
+        return Response(
+            {'error': 'Failed to register token'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def unregister_device_api(request):
+    """
+    Unregister a device token (logout or disable notifications).
     
-    @action(detail=False, methods=['post'])
-    def unregister(self, request):
-        """
-        Unregister a device token.
-        
-        Request body:
-            token: FCM device token to unregister
-        """
-        token = request.data.get('token')
-        if not token:
-            return Response(
-                {'error': 'Token is required.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        deleted, _ = DeviceToken.objects.filter(
+    POST /notifications/api/unregister/
+    {
+        "token": "fcm_device_token_here"
+    }
+    """
+    token = request.data.get('token')
+    
+    if not token:
+        return Response(
+            {'error': 'Token is required'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        deleted_count, _ = DeviceToken.objects.filter(
             user=request.user,
             token=token
         ).delete()
         
-        if deleted:
-            return Response({'message': 'Device unregistered successfully.'})
+        if deleted_count > 0:
+            logger.info(f"✅ Device token removed for user {request.user.id}")
+            return Response({
+                'success': True,
+                'message': 'Token unregistered successfully'
+            })
+        else:
+            return Response(
+                {'error': 'Token not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
+    except Exception as e:
+        logger.error(f"❌ Error unregistering device token: {e}")
         return Response(
-            {'error': 'Token not found.'},
-            status=status.HTTP_404_NOT_FOUND
+            {'error': 'Failed to unregister token'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
-class NotificationPreferenceViewSet(viewsets.ViewSet):
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def unregister_all_devices_api(request):
     """
-    ViewSet for managing notification preferences.
+    Unregister all device tokens for the current user (full logout).
     
-    retrieve:
-        Get current user's notification preferences.
-    
-    update:
-        Update notification preferences.
+    DELETE /notifications/api/unregister-all/
     """
-    permission_classes = [IsAuthenticated]
-    
-    def list(self, request):
-        """Get notification preferences."""
-        prefs, created = NotificationPreference.objects.get_or_create(
-            user=request.user
-        )
-        serializer = NotificationPreferenceSerializer(prefs)
-        return Response(serializer.data)
-    
-    def create(self, request):
-        """Update notification preferences."""
-        prefs, created = NotificationPreference.objects.get_or_create(
-            user=request.user
-        )
-        serializer = NotificationPreferenceSerializer(prefs, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
+    try:
+        deleted_count, _ = DeviceToken.objects.filter(user=request.user).delete()
         
-        return Response(serializer.data)
-    
-    @action(detail=False, methods=['post'])
-    def reset(self, request):
-        """Reset preferences to defaults."""
-        NotificationPreference.objects.filter(user=request.user).delete()
-        prefs = NotificationPreference.objects.create(user=request.user)
-        serializer = NotificationPreferenceSerializer(prefs)
+        logger.info(f"✅ Removed {deleted_count} device tokens for user {request.user.id}")
+        
         return Response({
-            'message': 'Preferences reset to defaults.',
-            'preferences': serializer.data
+            'success': True,
+            'message': f'Removed {deleted_count} device(s)',
+            'deleted_count': deleted_count
         })
+        
+    except Exception as e:
+        logger.error(f"❌ Error unregistering all devices: {e}")
+        return Response(
+            {'error': 'Failed to unregister devices'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_devices_api(request):
+    """
+    List all registered devices for the current user.
+    
+    GET /notifications/api/devices/
+    """
+    devices = DeviceToken.objects.filter(
+        user=request.user,
+        is_active=True
+    ).values('id', 'device_type', 'created_at', 'updated_at')
+    
+    return Response({
+        'devices': list(devices),
+        'count': len(devices)
+    })
+
+
+# ============================================
+# SERVICE WORKER (For web push)
+# ============================================
+
+@require_http_methods(["GET"])
+def service_worker(request):
+    """
+    Serve the Firebase messaging service worker with config from environment variables.
+    
+    This MUST be served from the root of your domain for web push to work.
+    The service worker handles background notifications when the browser tab is closed.
+    
+    Firebase config is read from environment variables to keep secrets safe.
+    """
+    # Get Firebase config from environment variables
+    api_key = os.environ.get('FIREBASE_API_KEY', '')
+    auth_domain = os.environ.get('FIREBASE_AUTH_DOMAIN', '')
+    project_id = os.environ.get('FIREBASE_PROJECT_ID', '')
+    storage_bucket = os.environ.get('FIREBASE_STORAGE_BUCKET', '')
+    messaging_sender_id = os.environ.get('FIREBASE_MESSAGING_SENDER_ID', '')
+    app_id = os.environ.get('FIREBASE_APP_ID', '')
+    measurement_id = os.environ.get('FIREBASE_MEASUREMENT_ID', '')
+    
+    # Build the service worker JavaScript
+    # Using string formatting to avoid f-string issues with JavaScript template literals
+    js_code = '''
+importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging-compat.js');
+
+// Firebase configuration (injected from Django environment variables)
+firebase.initializeApp({
+    apiKey: "''' + api_key + '''",
+    authDomain: "''' + auth_domain + '''",
+    projectId: "''' + project_id + '''",
+    storageBucket: "''' + storage_bucket + '''",
+    messagingSenderId: "''' + messaging_sender_id + '''",
+    appId: "''' + app_id + '''",
+    measurementId: "''' + measurement_id + '''"
+});
+
+const messaging = firebase.messaging();
+
+// Handle background messages (when browser tab is closed or in background)
+messaging.onBackgroundMessage((payload) => {
+    console.log('[firebase-messaging-sw.js] Background message received:', payload);
+    
+    const notificationTitle = payload.notification?.title || 'MediLink';
+    const notificationOptions = {
+        body: payload.notification?.body || '',
+        icon: '/static/notifications/icon-192.png',
+        badge: '/static/notifications/badge-72.png',
+        image: payload.notification?.image,
+        data: payload.data,
+        vibrate: [100, 50, 100],
+        actions: [
+            { action: 'open', title: 'Open' },
+            { action: 'dismiss', title: 'Dismiss' }
+        ]
+    };
+    
+    self.registration.showNotification(notificationTitle, notificationOptions);
+});
+
+// Handle notification click
+self.addEventListener('notificationclick', (event) => {
+    console.log('[firebase-messaging-sw.js] Notification clicked:', event);
+    
+    event.notification.close();
+    
+    if (event.action === 'dismiss') {
+        return;
+    }
+    
+    // Get the action URL from data payload or default to home
+    const actionUrl = event.notification.data?.action_url || '/';
+    
+    event.waitUntil(
+        clients.matchAll({ type: 'window', includeUncontrolled: true })
+            .then((clientList) => {
+                // If a window is already open, focus it
+                for (const client of clientList) {
+                    if (client.url.includes(self.location.origin) && 'focus' in client) {
+                        client.focus();
+                        client.navigate(actionUrl);
+                        return;
+                    }
+                }
+                // Otherwise, open a new window
+                if (clients.openWindow) {
+                    return clients.openWindow(actionUrl);
+                }
+            })
+    );
+});
+'''
+    response = HttpResponse(js_code, content_type='application/javascript')
+    # Allow service worker to be cached but revalidated
+    response['Cache-Control'] = 'public, max-age=0, must-revalidate'
+    response['Service-Worker-Allowed'] = '/'
+    return response
