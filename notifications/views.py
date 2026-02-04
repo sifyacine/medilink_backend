@@ -84,21 +84,36 @@ def register_device_api(request):
         )
     
     try:
-        # Update or create the device token
-        device_token, created = DeviceToken.objects.update_or_create(
-            token=token,
-            defaults={
-                'user': request.user,
-                'device_type': device_type,
-                'is_active': True,
-            }
-        )
+        # Check if token exists for this user
+        device_token = DeviceToken.objects.filter(user=request.user, token=token).first()
         
-        # If token exists but for different user, reassign it
-        if not created and device_token.user != request.user:
-            device_token.user = request.user
+        if device_token:
+            # Update existing token for this user
+            device_token.device_type = device_type
             device_token.is_active = True
             device_token.save()
+            created = False
+        else:
+            # Check if token exists for a different user
+            existing_token = DeviceToken.objects.filter(token=token).first()
+            
+            if existing_token:
+                # Reassign token to current user
+                existing_token.user = request.user
+                existing_token.device_type = device_type
+                existing_token.is_active = True
+                existing_token.save()
+                device_token = existing_token
+                created = False
+            else:
+                # Create new token
+                device_token = DeviceToken.objects.create(
+                    user=request.user,
+                    token=token,
+                    device_type=device_type,
+                    is_active=True
+                )
+                created = True
         
         logger.info(f"✅ Device token {'created' if created else 'updated'} for user {request.user.id}")
         
@@ -109,9 +124,9 @@ def register_device_api(request):
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
         
     except Exception as e:
-        logger.error(f"❌ Error registering device token: {e}")
+        logger.error(f"❌ Error registering device token: {e}", exc_info=True)
         return Response(
-            {'error': 'Failed to register token'}, 
+            {'error': f'Failed to register token: {str(e)}'}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 

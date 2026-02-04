@@ -82,7 +82,7 @@ class DeviceToken(models.Model):
     )
     
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='device_tokens')
-    token = models.CharField(max_length=255, unique=True)
+    token = models.CharField(max_length=255)
     device_type = models.CharField(max_length=10, choices=DEVICE_TYPES)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
