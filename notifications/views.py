@@ -8,6 +8,7 @@ import logging
 import os
 
 from .models import DeviceToken
+from .services import NotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -211,15 +212,55 @@ def list_devices_api(request):
     
     GET /notifications/api/devices/
     """
-    devices = DeviceToken.objects.filter(
+    devices_qs = DeviceToken.objects.filter(
         user=request.user,
         is_active=True
     ).values('id', 'device_type', 'created_at', 'updated_at')
     
+    devices = [
+        {**d, 'id': str(d['id'])}
+        for d in devices_qs
+    ]
     return Response({
-        'devices': list(devices),
+        'devices': devices,
         'count': len(devices)
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_test_notification_api(request):
+    """
+    Send a test FCM notification to the current user's registered devices.
+    Use this to verify the backend is actually sending notifications.
+    
+    POST /api/notifications/test/
+    Optional body: { "title": "Custom title", "body": "Custom body" }
+    """
+    title = (request.data.get('title') or 'MediLink Test').strip() or 'MediLink Test'
+    body = (request.data.get('body') or 'If you see this, backend FCM is working.').strip() or 'Test notification.'
+    
+    sent = NotificationService.send_to_user(
+        user=request.user,
+        title=title,
+        body=body,
+        data={'type': 'TEST', 'source': 'backend_test_endpoint'}
+    )
+    
+    if sent:
+        logger.info(f"Test notification sent to user {request.user.id}")
+        return Response({
+            'success': True,
+            'message': 'Test notification sent to your registered device(s).',
+        })
+    
+    return Response(
+        {
+            'success': False,
+            'message': 'No notification sent. Register a device token first (POST /api/notifications/register/) and ensure Firebase Admin SDK is initialized (firebase-credentials.json).',
+        },
+        status=status.HTTP_400_BAD_REQUEST
+    )
 
 
 # ============================================

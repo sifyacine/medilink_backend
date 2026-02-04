@@ -281,6 +281,17 @@ class NotificationService:
         - Token cleanup for failed tokens
         """
         if not tokens:
+            logger.debug("No FCM tokens to send to")
+            return False
+
+        # Ensure Firebase Admin SDK is initialized (required for sending)
+        try:
+            import firebase_admin
+            if not firebase_admin._apps:
+                logger.warning("Firebase Admin SDK not initialized; cannot send FCM. Check firebase-credentials.json.")
+                return False
+        except Exception as e:
+            logger.warning(f"Firebase check failed: {e}; cannot send FCM.")
             return False
         
         # Ensure data values are strings (FCM requirement)

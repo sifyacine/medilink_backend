@@ -28,4 +28,7 @@ urlpatterns = [
     # GET /api/notifications/devices/
     path('notifications/devices/', views.list_devices_api, name='list_devices'),
     
+    # Send test notification to current user (verify backend sends FCM)
+    # POST /api/notifications/test/
+    path('notifications/test/', views.send_test_notification_api, name='send_test_notification'),
 ]
