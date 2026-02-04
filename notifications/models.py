@@ -1,3 +1,4 @@
+import uuid
 from django.db import models
 from django.contrib.auth import get_user_model
 
@@ -74,13 +75,15 @@ class DeviceToken(models.Model):
     
     Each user can have multiple devices (phone, tablet, web browser).
     Tokens are automatically deactivated when they become invalid.
+    Uses UUID primary key for compatibility with existing production databases.
     """
     DEVICE_TYPES = (
         ('android', 'Android'),
         ('ios', 'iOS'),
         ('web', 'Web'),
     )
-    
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='device_tokens')
     token = models.CharField(max_length=255)
     device_type = models.CharField(max_length=10, choices=DEVICE_TYPES)
