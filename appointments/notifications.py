@@ -92,7 +92,9 @@ class AppointmentNotifier:
         appointment_data = cls._serialize_appointment_for_websocket(appointment)
         
         # Notify provider if patient created the appointment
-        if created_by and created_by != provider_user:
+        # For debugging purposes, we allow notification even if created by provider
+        # if created_by and created_by != provider_user:
+        if True:
             # Create in-app notification + FCM push
             NotificationService.create_for_object(
                 recipient=provider_user,
