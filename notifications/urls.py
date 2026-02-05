@@ -31,4 +31,8 @@ urlpatterns = [
     # Send test notification to current user (verify backend sends FCM)
     # POST /api/notifications/test/
     path('notifications/test/', views.send_test_notification_api, name='send_test_notification'),
+    
+    # Send test notification to a specific provider (for debugging cross-user flows)
+    # POST /api/notifications/test-provider/
+    path('notifications/test-provider/', views.send_test_to_provider_api, name='send_test_to_provider'),
 ]

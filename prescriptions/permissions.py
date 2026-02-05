@@ -5,6 +5,8 @@ Relationship chain:
 - User -> provider_profile (Provider) -> doctor_profile (Doctor)
 - User is NOT directly linked to Doctor
 """
+
+import contextlib
 from rest_framework.permissions import BasePermission, SAFE_METHODS
 from common.enums import ProviderStatus
 
@@ -18,14 +20,11 @@ def get_doctor_from_user(user):
     """
     if not user or not user.is_authenticated:
         return None
-    
-    try:
+
+    with contextlib.suppress(Exception):
         provider = getattr(user, 'provider_profile', None)
         if provider and provider.status == ProviderStatus.APPROVED:
             return getattr(provider, 'doctor_profile', None)
-    except Exception:
-        pass
-    
     return None
 
 
@@ -50,12 +49,9 @@ class IsPrescriptionDoctor(BasePermission):
     def has_object_permission(self, request, view, obj):
         if request.method in SAFE_METHODS:
             return True
-        
+
         doctor = get_doctor_from_user(request.user)
-        if doctor:
-            return obj.doctor == doctor
-        
-        return False
+        return obj.doctor == doctor if doctor else False
 
 
 class CanViewPrescription(BasePermission):
@@ -81,7 +77,7 @@ class CanViewPrescription(BasePermission):
         doctor = get_doctor_from_user(user)
         if doctor and obj.doctor == doctor:
             return True
-        
+                
         # Patient with account
         if obj.patient == user:
             return True

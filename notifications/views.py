@@ -263,6 +263,62 @@ def send_test_notification_api(request):
     )
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_test_to_provider_api(request):
+    """
+    Send a test FCM notification to a specific provider's registered devices.
+    Highly useful for debugging cross-user notification flows.
+    
+    POST /api/notifications/test-provider/
+    Body: { "provider_id": "uuid", "title": "?", "body": "?" }
+    """
+    from providers.models import Provider
+    
+    provider_id = request.data.get('provider_id')
+    title = (request.data.get('title') or 'MediLink Notification Test').strip()
+    body = (request.data.get('body') or f'Test message from {request.user.email}').strip()
+    
+    if not provider_id:
+        return Response({'error': 'provider_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+    try:
+        provider = Provider.objects.get(id=provider_id)
+        provider_user = provider.user
+        
+        sent = NotificationService.send_to_user(
+            user=provider_user,
+            title=title,
+            body=body,
+            data={
+                'type': 'TEST_DIRECT', 
+                'sender_email': request.user.email,
+                'source': 'manual_test_trigger'
+            }
+        )
+        
+        if sent:
+            logger.info(f"✅ Test notification sent from user {request.user.id} to provider {provider_id}")
+            return Response({
+                'success': True,
+                'message': f'Test notification sent to {provider_user.email}.',
+            })
+        
+        return Response(
+            {
+                'success': False,
+                'message': f'Could not send notification. Provider {provider_user.email} may not have any active device tokens.',
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+        
+    except Provider.DoesNotExist:
+        return Response({'error': 'Provider not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        logger.error(f"❌ Error in send_test_to_provider_api: {e}")
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 # ============================================
 # SERVICE WORKER (For web push)
 # ============================================

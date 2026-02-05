@@ -44,22 +44,31 @@ class AppointmentNotifier:
         """
         from common.utils import get_patient_display_name, get_provider_display_name
         
+        from .models import AppointmentLocationType
+        
         provider = appointment.provider
+        
+        # Derive helper fields from location_type
+        is_home_visit = appointment.location_type == AppointmentLocationType.HOME
+        is_virtual = appointment.location_type == AppointmentLocationType.ONLINE
         
         data = {
             'id': str(appointment.pk),
             'status': appointment.status,
-            'scheduled_date': appointment.scheduled_date.isoformat(),
-            'scheduled_time': appointment.scheduled_time.strftime('%H:%M'),
+            'scheduled_date': appointment.scheduled_date.isoformat() if appointment.scheduled_date else None,
+            'scheduled_time': appointment.scheduled_time.strftime('%H:%M') if appointment.scheduled_time else "TBD",
             'duration_minutes': appointment.duration_minutes,
-            'patient_name': get_patient_display_name(appointment),
+            'patient_name': get_patient_display_name(
+                patient_user=appointment.patient_user, 
+                patient_record=appointment.patient_record
+            ),
             'provider_id': str(provider.id),
             'provider_name': get_provider_display_name(provider),
             'provider_type': provider.provider_type if hasattr(provider, 'provider_type') else None,
-            'service_name': appointment.service.title if appointment.service else None,
-            'appointment_type': appointment.appointment_type,
-            'is_home_visit': appointment.is_home_visit,
-            'is_virtual': appointment.is_virtual,
+            'service_name': appointment.service.name if appointment.service else None,
+            'location_type': appointment.location_type,
+            'is_home_visit': is_home_visit,
+            'is_virtual': is_virtual,
             'created_at': appointment.created_at.isoformat(),
         }
         
@@ -83,11 +92,14 @@ class AppointmentNotifier:
         provider_user = appointment.provider.user
         patient_user = appointment.patient_user
 
-        patient_name = get_patient_display_name(appointment)
+        patient_name = get_patient_display_name(
+            patient_user=appointment.patient_user, 
+            patient_record=appointment.patient_record
+        )
         provider_name = provider_user.get_full_name() or provider_user.email
 
-        date_str = appointment.scheduled_date.strftime('%B %d, %Y')
-        time_str = appointment.scheduled_time.strftime('%I:%M %p')
+        date_str = appointment.scheduled_date.strftime('%B %d, %Y') if appointment.scheduled_date else "TBD"
+        time_str = appointment.scheduled_time.strftime('%I:%M %p') if appointment.scheduled_time else "TBD"
 
         appointment_data = cls._serialize_appointment_for_websocket(appointment)
 
@@ -146,8 +158,8 @@ class AppointmentNotifier:
             return
         
         provider_name = appointment.provider.user.get_full_name() or appointment.provider.user.email
-        date_str = appointment.scheduled_date.strftime('%B %d, %Y')
-        time_str = appointment.scheduled_time.strftime('%I:%M %p')
+        date_str = appointment.scheduled_date.strftime('%B %d, %Y') if appointment.scheduled_date else "TBD"
+        time_str = appointment.scheduled_time.strftime('%I:%M %p') if appointment.scheduled_time else "TBD"
         
         # Create notification
         NotificationService.create_for_object(
@@ -185,9 +197,12 @@ class AppointmentNotifier:
         
         provider_user = appointment.provider.user
         patient_user = appointment.patient_user
-        patient_name = get_patient_display_name(appointment)
+        patient_name = get_patient_display_name(
+            patient_user=appointment.patient_user, 
+            patient_record=appointment.patient_record
+        )
         provider_name = provider_user.get_full_name() or provider_user.email
-        date_str = appointment.scheduled_date.strftime('%B %d, %Y')
+        date_str = appointment.scheduled_date.strftime('%B %d, %Y') if appointment.scheduled_date else "TBD"
         
         reason_text = reason or 'No reason provided'
         appointment_data = cls._serialize_appointment_for_websocket(appointment)
@@ -248,10 +263,15 @@ class AppointmentNotifier:
         
         provider_user = appointment.provider.user
         patient_user = appointment.patient_user
-        patient_name = get_patient_display_name(appointment)
         provider_name = provider_user.get_full_name() or provider_user.email
-        date_str = appointment.scheduled_date.strftime('%B %d, %Y')
-        time_str = appointment.scheduled_time.strftime('%I:%M %p')
+        date_str = appointment.scheduled_date.strftime('%B %d, %Y') if appointment.scheduled_date else "TBD"
+        time_str = appointment.scheduled_time.strftime('%I:%M %p') if appointment.scheduled_time else "TBD"
+        
+        # Determine names
+        patient_name = get_patient_display_name(
+            patient_user=appointment.patient_user, 
+            patient_record=appointment.patient_record
+        )
         
         appointment_data = cls._serialize_appointment_for_websocket(appointment)
         
@@ -310,7 +330,7 @@ class AppointmentNotifier:
             return
         
         provider_name = appointment.provider.user.get_full_name() or appointment.provider.user.email
-        time_str = appointment.scheduled_time.strftime('%I:%M %p')
+        time_str = appointment.scheduled_time.strftime('%I:%M %p') if appointment.scheduled_time else "TBD"
         
         NotificationService.create_for_object(
             recipient=patient_user,
@@ -341,7 +361,7 @@ class AppointmentNotifier:
             return
         
         provider_name = appointment.provider.user.get_full_name() or appointment.provider.user.email
-        date_str = appointment.scheduled_date.strftime('%B %d, %Y')
+        date_str = appointment.scheduled_date.strftime('%B %d, %Y') if appointment.scheduled_date else "TBD"
         
         NotificationService.create_for_object(
             recipient=patient_user,
