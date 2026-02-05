@@ -79,44 +79,40 @@ class AppointmentNotifier:
             created_by: User who created the appointment (to avoid notifying themselves)
         """
         from common.utils import get_patient_display_name
-        
+
         provider_user = appointment.provider.user
         patient_user = appointment.patient_user
-        
+
         patient_name = get_patient_display_name(appointment)
         provider_name = provider_user.get_full_name() or provider_user.email
-        
+
         date_str = appointment.scheduled_date.strftime('%B %d, %Y')
         time_str = appointment.scheduled_time.strftime('%I:%M %p')
-        
+
         appointment_data = cls._serialize_appointment_for_websocket(appointment)
-        
-        # Notify provider if patient created the appointment
-        # For debugging purposes, we allow notification even if created by provider
-        # if created_by and created_by != provider_user:
-        if True:
-            # Create in-app notification + FCM push
-            NotificationService.create_for_object(
-                recipient=provider_user,
-                title='🗓️ New Appointment Request',
-                message=f'{patient_name} has requested an appointment on {date_str} at {time_str}.',
-                related_object=appointment,
-                notification_type=NotificationType.APPOINTMENT_CREATED,
-                priority=NotificationPriority.HIGH,
-                action_url=f'/appointments/{appointment.pk}',
-                data={'appointment_id': str(appointment.pk)},
-            )
-            
-            # Also broadcast via appointment WebSocket for instant dashboard update
-            WebSocketBroadcaster.send_to_provider(
-                provider_id=appointment.provider.id,
-                message_type='new_appointment',
-                data={
-                    'appointment': appointment_data,
-                    'message': f'New appointment request from {patient_name}',
-                }
-            )
-        
+
+        # Create in-app notification + FCM push
+        NotificationService.create_for_object(
+            recipient=provider_user,
+            title='🗓️ New Appointment Request',
+            message=f'{patient_name} has requested an appointment on {date_str} at {time_str}.',
+            related_object=appointment,
+            notification_type=NotificationType.APPOINTMENT_CREATED,
+            priority=NotificationPriority.HIGH,
+            action_url=f'/appointments/{appointment.pk}',
+            data={'appointment_id': str(appointment.pk)},
+        )
+
+        # Also broadcast via appointment WebSocket for instant dashboard update
+        WebSocketBroadcaster.send_to_provider(
+            provider_id=appointment.provider.id,
+            message_type='new_appointment',
+            data={
+                'appointment': appointment_data,
+                'message': f'New appointment request from {patient_name}',
+            }
+        )
+
         # Notify patient if provider created the appointment
         if patient_user and created_by and created_by == provider_user:
             NotificationService.create_for_object(
@@ -129,7 +125,7 @@ class AppointmentNotifier:
                 action_url=f'/appointments/{appointment.pk}',
                 data={'appointment_id': str(appointment.pk)},
             )
-            
+
             # WebSocket for patient
             WebSocketBroadcaster.send_to_patient(
                 user_id=patient_user.id,
