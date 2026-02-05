@@ -7,7 +7,7 @@ from rest_framework.response import Response
 import logging
 import os
 
-from .models import DeviceToken
+from .models import DeviceToken, Notification
 from .services import NotificationService
 
 logger = logging.getLogger(__name__)
@@ -265,29 +265,54 @@ def send_test_notification_api(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
-def send_test_to_provider_api(request):
+def send_test_to_user_api(request):
     """
-    Send a test FCM notification to a specific provider's registered devices.
+    Send a test FCM notification to a specific user's registered devices.
     Highly useful for debugging cross-user notification flows.
     
-    POST /api/notifications/test-provider/
-    Body: { "provider_id": "uuid", "title": "?", "body": "?" }
+    POST /api/notifications/test-user/
+    Body: { "user_id": "uuid/int", "provider_id": "uuid (optional legacy)", "title": "?", "body": "?" }
     """
+    from django.contrib.auth import get_user_model
     from providers.models import Provider
+    from patients.models import PatientRecord
     
+    User = get_user_model()
+    
+    user_id = request.data.get('user_id')
     provider_id = request.data.get('provider_id')
+    patient_id = request.data.get('patient_id')
     title = (request.data.get('title') or 'MediLink Notification Test').strip()
     body = (request.data.get('body') or f'Test message from {request.user.email}').strip()
     
-    if not provider_id:
-        return Response({'error': 'provider_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+    target_user = None
+    
+    if user_id:
+        try:
+            target_user = User.objects.get(id=user_id)
+        except (User.DoesNotExist, ValueError):
+            return Response({'error': 'User not found'}, status=status.HTTP_404_NOT_FOUND)
+    elif provider_id:
+        try:
+            provider = Provider.objects.get(id=provider_id)
+            target_user = provider.user
+        except (Provider.DoesNotExist, ValueError):
+            return Response({'error': 'Provider not found'}, status=status.HTTP_404_NOT_FOUND)
+    elif patient_id:
+        try:
+            patient = PatientRecord.objects.get(id=patient_id)
+            if not patient.linked_user:
+                return Response({'error': 'Patient record is not linked to a user account'}, status=status.HTTP_400_BAD_REQUEST)
+            target_user = patient.linked_user
+        except (PatientRecord.DoesNotExist, ValueError):
+            return Response({'error': 'Patient record not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+    if not target_user:
+        return Response({'error': 'user_id, provider_id, or patient_id is required'}, status=status.HTTP_400_BAD_REQUEST)
         
     try:
-        provider = Provider.objects.get(id=provider_id)
-        provider_user = provider.user
-        
         sent = NotificationService.send_to_user(
-            user=provider_user,
+            user=target_user,
             title=title,
             body=body,
             data={
@@ -298,25 +323,108 @@ def send_test_to_provider_api(request):
         )
         
         if sent:
-            logger.info(f"✅ Test notification sent from user {request.user.id} to provider {provider_id}")
+            logger.info(f"✅ Test notification sent from user {request.user.id} to target user {target_user.id}")
             return Response({
                 'success': True,
-                'message': f'Test notification sent to {provider_user.email}.',
+                'message': f'Test notification sent to {target_user.email}.',
             })
         
         return Response(
             {
                 'success': False,
-                'message': f'Could not send notification. Provider {provider_user.email} may not have any active device tokens.',
+                'message': f'Could not send notification. Target user {target_user.email} may not have any active device tokens.',
             },
             status=status.HTTP_400_BAD_REQUEST
         )
         
-    except Provider.DoesNotExist:
         return Response({'error': 'Provider not found'}, status=status.HTTP_404_NOT_FOUND)
     except Exception as e:
         logger.error(f"❌ Error in send_test_to_provider_api: {e}")
         return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_notifications_api(request):
+    """
+    List all notifications for the current user.
+    
+    GET /api/notifications/
+    """
+    notifications_qs = Notification.objects.filter(
+        recipient=request.user
+    ).values('id', 'title', 'body', 'notification_type', 'data', 'is_read', 'created_at')
+    
+    notifications = [
+        {**n, 'id': str(n['id']), 'timestamp': n['created_at']}
+        for n in notifications_qs
+    ]
+    return Response({
+        'notifications': notifications,
+        'count': len(notifications),
+        'unread_count': Notification.objects.filter(recipient=request.user, is_read=False).count()
+    })
+
+
+@api_view(['PATCH'])
+@permission_classes([IsAuthenticated])
+def mark_notification_read_api(request, notification_id):
+    """
+    Mark a specific notification as read.
+    
+    PATCH /api/notifications/<id>/read/
+    """
+    try:
+        notification = Notification.objects.get(id=notification_id, recipient=request.user)
+        notification.is_read = True
+        notification.save()
+        return Response({'success': True, 'message': 'Notification marked as read'})
+    except Notification.DoesNotExist:
+        return Response({'error': 'Notification not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def mark_all_notifications_read_api(request):
+    """
+    Mark all notifications for the current user as read.
+    
+    POST /api/notifications/mark-all-read/
+    """
+    Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
+    return Response({'success': True, 'message': 'All notifications marked as read'})
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_notification_api(request, notification_id):
+    """
+    Delete a specific notification.
+    
+    DELETE /api/notifications/<id>/
+    """
+    try:
+        notification = Notification.objects.get(id=notification_id, recipient=request.user)
+        notification.delete()
+        return Response({'success': True, 'message': 'Notification deleted'})
+    except Notification.DoesNotExist:
+        return Response({'error': 'Notification not found'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def clear_all_notifications_api(request):
+    """
+    Delete all notifications for the current user.
+    
+    DELETE /api/notifications/clear-all/
+    """
+    count, _ = Notification.objects.filter(recipient=request.user).delete()
+    return Response({'success': True, 'message': f'Cleared {count} notifications'})
 
 
 # ============================================

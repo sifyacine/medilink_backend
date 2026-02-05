@@ -33,6 +33,34 @@ urlpatterns = [
     path('notifications/test/', views.send_test_notification_api, name='send_test_notification'),
     
     # Send test notification to a specific provider (for debugging cross-user flows)
-    # POST /api/notifications/test-provider/
-    path('notifications/test-provider/', views.send_test_to_provider_api, name='send_test_to_provider'),
+    # POST /api/notifications/test-provider/ (Legacy, maps to test-user)
+    path('notifications/test-provider/', views.send_test_to_user_api, name='send_test_to_provider'),
+    
+    # Send test notification to any specific user
+    # POST /api/notifications/test-user/
+    path('notifications/test-user/', views.send_test_to_user_api, name='send_test_to_user'),
+    
+    # -------------------------------------------
+    # History & Management
+    # -------------------------------------------
+    
+    # List notifications
+    # GET /api/notifications/
+    path('notifications/', views.list_notifications_api, name='list_notifications'),
+    
+    # Mark as read
+    # PATCH /api/notifications/<id>/read/
+    path('notifications/<uuid:notification_id>/read/', views.mark_notification_read_api, name='mark_notification_read'),
+    
+    # Mark all read
+    # POST /api/notifications/mark-all-read/
+    path('notifications/mark-all-read/', views.mark_all_notifications_read_api, name='mark_all_read'),
+    
+    # Delete single notification
+    # DELETE /api/notifications/<id>/
+    path('notifications/<uuid:notification_id>/', views.delete_notification_api, name='delete_notification'),
+    
+    # Clear all notifications
+    # DELETE /api/notifications/clear-all/
+    path('notifications/clear-all/', views.clear_all_notifications_api, name='clear_all_notifications'),
 ]

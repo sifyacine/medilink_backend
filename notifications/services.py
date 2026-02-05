@@ -39,7 +39,7 @@ from firebase_admin.exceptions import FirebaseError
 from django.contrib.auth import get_user_model
 import logging
 
-from .models import DeviceToken
+from .models import DeviceToken, Notification, NotificationType, NotificationCategory, NotificationPriority
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -86,13 +86,24 @@ class NotificationService:
             logger.debug(f"No active tokens found for user {user.id}")
             return False
         
-        return NotificationService._send_to_tokens(
+        sent_success = NotificationService._send_to_tokens(
             tokens=tokens,
             title=title,
             body=body,
             image_url=image_url,
             data=data
         )
+        
+        # Save to database for history
+        if sent_success:
+            NotificationService._save_notification(
+                user=user,
+                title=title,
+                body=body,
+                data=data
+            )
+            
+        return sent_success
     
     @staticmethod
     def send_to_users(users, title: str, body: str, image_url: str = None, data: dict = None) -> bool:
@@ -119,13 +130,25 @@ class NotificationService:
             logger.debug(f"No active tokens found for users")
             return False
         
-        return NotificationService._send_to_tokens(
+        sent_success = NotificationService._send_to_tokens(
             tokens=tokens,
             title=title,
             body=body,
             image_url=image_url,
             data=data
         )
+
+        # Save to database for history for each user
+        if sent_success:
+            for user in users:
+                NotificationService._save_notification(
+                    user=user,
+                    title=title,
+                    body=body,
+                    data=data
+                )
+        
+        return sent_success
     
     @staticmethod
     def send_to_topic(topic: str, title: str, body: str, image_url: str = None, data: dict = None) -> bool:
@@ -344,6 +367,31 @@ class NotificationService:
         logger.info(f"📬 Notification sent: {total_success} success, {total_failure} failed")
         return total_success > 0
     
+
+    @staticmethod
+    def _save_notification(user, title: str, body: str, data: dict = None) -> None:
+        """
+        Internal helper to save a notification to the database.
+        """
+        try:
+            # Map notification_type if present in data
+            notif_type = data.get('type') if data else None
+            # Basic validation of choices
+            if notif_type not in [c[0] for c in NotificationType.choices]:
+                notif_type = NotificationType.GENERAL
+
+            Notification.objects.create(
+                recipient=user,
+                title=title,
+                body=body,
+                notification_type=notif_type,
+                data=data or {},
+                is_read=False
+            )
+            logger.debug(f"💾 Saved notification to history for user {user.id}")
+        except Exception as e:
+            logger.error(f"❌ Error saving notification to history: {e}")
+
     @staticmethod
     def _prepare_data(data: dict) -> dict:
         """
