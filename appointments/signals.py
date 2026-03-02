@@ -69,6 +69,11 @@ def handle_appointment_save(sender, instance, created, **kwargs):
 def _handle_status_change(appointment, old_status, new_status):
     """
     Handle appointment status changes and send appropriate notifications.
+    
+    Each status transition triggers:
+    - FCM push notification (via NotificationService)
+    - WebSocket broadcast to user groups + appointment group
+    - In-app notification stored in DB
     """
     try:
         if new_status == AppointmentStatus.CONFIRMED:
@@ -95,36 +100,13 @@ def _handle_status_change(appointment, old_status, new_status):
             _add_patient_to_provider_list(appointment)
         
         elif new_status == AppointmentStatus.REJECTED:
-            # Provider rejected the appointment request
-            _notify_appointment_rejected(appointment)
+            AppointmentNotifier.notify_appointment_rejected(appointment)
+        
+        elif new_status == AppointmentStatus.NO_SHOW:
+            AppointmentNotifier.notify_appointment_no_show(appointment)
         
     except Exception as e:
         logger.error(f"Error handling status change notification: {e}")
-
-
-def _notify_appointment_rejected(appointment):
-    """Notify patient that their appointment was rejected."""
-    from notifications.services import NotificationService
-    from notifications.models import NotificationType, NotificationPriority
-    
-    patient_user = appointment.patient_user
-    if not patient_user:
-        return
-    
-    provider_name = appointment.provider.user.get_full_name() or appointment.provider.user.email
-    date_str = appointment.scheduled_date.strftime('%B %d, %Y')
-    
-    reason = appointment.rejection_notes if hasattr(appointment, 'rejection_notes') else 'No reason provided'
-    
-    NotificationService.create_for_object(
-        recipient=patient_user,
-        title='Appointment Request Declined',
-        message=f'Your appointment request with {provider_name} on {date_str} was not accepted. {reason}',
-        related_object=appointment,
-        notification_type=NotificationType.APPOINTMENT_CANCELLED,
-        priority=NotificationPriority.NORMAL,
-        action_url=f'/appointments/{appointment.pk}',
-    )
 
 
 def _add_patient_to_provider_list(appointment):

@@ -5,7 +5,10 @@ It exposes the ASGI callable as a module-level variable named ``application``.
 
 Supports:
 - HTTP requests (Django)
-- WebSocket connections with JWT/Token authentication
+- WebSocket connections with Token authentication for:
+  - Notifications (per-user real-time stream)
+  - Appointments (real-time status updates)
+  - Nurse Requests (on-demand nursing flow)
 
 For more information on this file, see
 https://docs.djangoproject.com/en/6.0/howto/deployment/asgi/
@@ -24,18 +27,23 @@ django_asgi_app = get_asgi_application()
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.security.websocket import AllowedHostsOriginValidator
 
-# Import WebSocket routing
+# Import WebSocket routing from each app
 from nurse_requests.routing import websocket_urlpatterns as nurse_request_patterns
 from notifications.routing import websocket_urlpatterns as notification_patterns
+from appointments.routing import websocket_urlpatterns as appointment_patterns
 from notifications.middleware import WebSocketAuthMiddlewareStack
 
 # Combine all WebSocket URL patterns
-all_websocket_patterns = nurse_request_patterns + notification_patterns
+all_websocket_patterns = (
+    nurse_request_patterns
+    + notification_patterns
+    + appointment_patterns
+)
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
     "websocket": AllowedHostsOriginValidator(
-        # JWT/Token auth with fallback to session auth
+        # Token auth via ?token=<key> with session auth fallback
         WebSocketAuthMiddlewareStack(
             URLRouter(
                 all_websocket_patterns

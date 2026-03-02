@@ -1,17 +1,15 @@
 # notifications/services.py
 """
-Unified FCM Notification Service
+Unified Notification Service — FCM Push + WebSocket Broadcasting.
 
-This module provides a clean, unified interface for sending push notifications
-via Firebase Cloud Messaging (FCM). It uses the DeviceToken model to retrieve
-user tokens and handles token cleanup automatically.
-
-NO WEBSOCKETS - FCM ONLY
+This module provides a clean, unified interface for:
+1. **FCM push notifications** via Firebase Cloud Messaging
+2. **WebSocket real-time broadcasting** via Django Channels
 
 Usage:
-    from notifications.services import NotificationService
+    from notifications.services import NotificationService, WebSocketBroadcaster
     
-    # Send to a single user
+    # Send FCM push to a single user
     NotificationService.send_to_user(
         user=user_instance,
         title="Hello",
@@ -19,11 +17,11 @@ Usage:
         data={'key': 'value'}
     )
     
-    # Send to multiple users
-    NotificationService.send_to_users(
-        users=[user1, user2],
-        title="Announcement",
-        body="New feature available!"
+    # Broadcast real-time WebSocket event
+    WebSocketBroadcaster.send_to_patient(
+        user_id=42,
+        message_type='appointment_confirmed',
+        data={'appointment': {...}},
     )
     
     # Create notification (stores in DB + sends FCM push)
@@ -54,8 +52,9 @@ class NotificationService:
     - Fetching user device tokens from the database
     - Sending via FCM
     - Automatic cleanup of invalid/expired tokens
+    - Storing notifications in the database for in-app history
     
-    NO WEBSOCKETS - FCM ONLY
+    For real-time WebSocket delivery, use ``WebSocketBroadcaster``.
     """
     
     # ============================================
@@ -405,38 +404,117 @@ class NotificationService:
 
 
 # ============================================
-# WEBSOCKET BROADCASTER STUB
-# Since you want FCM only, this is a no-op stub
-# Other apps may import this but it won't do anything
+# WEBSOCKET BROADCASTER (Channel Layer)
+# Pushes real-time messages to connected WebSocket clients
+# via Django Channels' channel layer (in-memory or Redis).
 # ============================================
 
 class WebSocketBroadcaster:
     """
-    Stub class for WebSocket broadcasting.
-    
-    Since you're using FCM only (no sockets), this is a no-op.
-    Other apps that import this won't break, but no WebSocket messages will be sent.
+    Broadcast messages to WebSocket consumers via the Channel Layer.
+
+    Group naming conventions (must match the consumers):
+        user_{user_id}_notifications   — general notification stream
+        user_{user_id}_appointments    — appointment events for a user
+        appointment_{appt_id}          — events for a single appointment
     """
-    
+
+    @staticmethod
+    def _get_channel_layer():
+        """Lazily import to avoid issues at module load time."""
+        try:
+            from channels.layers import get_channel_layer
+            layer = get_channel_layer()
+            if layer is None:
+                logger.debug("Channel layer is not configured")
+            return layer
+        except Exception as e:
+            logger.warning("Could not get channel layer: %s", e)
+            return None
+
+    @staticmethod
+    def _send(group: str, message: dict) -> None:
+        """
+        Fire-and-forget send to a channel layer group.
+
+        Uses ``async_to_sync`` so callers don't need to be async.
+        """
+        layer = WebSocketBroadcaster._get_channel_layer()
+        if layer is None:
+            return
+        try:
+            from asgiref.sync import async_to_sync
+            async_to_sync(layer.group_send)(group, message)
+            logger.debug("WS sent %s to group %s", message.get("type"), group)
+        except Exception as e:
+            logger.error("WS broadcast error (%s → %s): %s", message.get("type"), group, e)
+
+    # ----- High-level helpers used by other apps -----
+
     @staticmethod
     def send_to_provider(provider_id, message_type: str, data: dict) -> None:
-        """No-op: WebSocket disabled (FCM only mode)"""
-        logger.debug(f"WebSocket disabled: would send {message_type} to provider {provider_id}")
-    
+        """
+        Send to a provider's personal groups.
+
+        Resolves provider → user_id then pushes to both the
+        notification stream and the appointments stream.
+        """
+        try:
+            from providers.models.provider import Provider
+            provider = Provider.objects.select_related("user").get(pk=provider_id)
+            user_id = provider.user_id
+        except Exception:
+            logger.warning("send_to_provider: cannot resolve provider %s", provider_id)
+            return
+
+        WebSocketBroadcaster._send_to_user_groups(user_id, message_type, data)
+
     @staticmethod
     def send_to_patient(user_id, message_type: str, data: dict) -> None:
-        """No-op: WebSocket disabled (FCM only mode)"""
-        logger.debug(f"WebSocket disabled: would send {message_type} to user {user_id}")
-    
+        """Send to a patient (user) groups."""
+        WebSocketBroadcaster._send_to_user_groups(user_id, message_type, data)
+
     @staticmethod
     def send_to_user(user_id, message_type: str, data: dict) -> None:
-        """No-op: WebSocket disabled (FCM only mode)"""
-        logger.debug(f"WebSocket disabled: would send {message_type} to user {user_id}")
-    
+        """Send to any user's groups (generic)."""
+        WebSocketBroadcaster._send_to_user_groups(user_id, message_type, data)
+
     @staticmethod
     def broadcast(channel: str, message_type: str, data: dict) -> None:
-        """No-op: WebSocket disabled (FCM only mode)"""
-        logger.debug(f"WebSocket disabled: would broadcast {message_type} to {channel}")
+        """Send to an arbitrary group name."""
+        WebSocketBroadcaster._send(channel, {
+            "type": message_type,
+            "data": data,
+        })
+
+    @staticmethod
+    def send_to_appointment(appointment_id, message_type: str, data: dict) -> None:
+        """
+        Send to the appointment-specific group so all subscribers
+        watching that single appointment receive the event.
+        """
+        group = f"appointment_{appointment_id}"
+        WebSocketBroadcaster._send(group, {
+            "type": message_type,
+            "data": data,
+        })
+
+    # ----- Internal -----
+
+    @staticmethod
+    def _send_to_user_groups(user_id, message_type: str, data: dict) -> None:
+        """Push to both the notification and appointment groups of a user."""
+        # Notification stream
+        WebSocketBroadcaster._send(
+            f"user_{user_id}_notifications",
+            {"type": message_type, "data": data},
+        )
+        # Appointment stream (if it's an appointment event)
+        if "appointment" in message_type:
+            WebSocketBroadcaster._send(
+                f"user_{user_id}_appointments",
+                {"type": message_type, "data": data},
+            )
 
 
 # ============================================

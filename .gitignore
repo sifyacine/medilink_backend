@@ -59,3 +59,6 @@ htmlcov/
 
 # IDE specific
 .vscode/settings.json
+
+# some md files
+ERD.md
