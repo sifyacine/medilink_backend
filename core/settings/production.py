@@ -12,20 +12,6 @@ ALLOWED_HOSTS = env.list(
 	],
 )
 
-# CORS: be explicit in production
-CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = env.list(
-	'CORS_ALLOWED_ORIGINS',
-	default=[
-		'https://dzmedilink.netlify.app',
-		'http://dzmedilink.duckdns.org',
-		'https://dzmedilink.duckdns.org',
-		'http://localhost:3000',
-		'http://localhost:5173',
-		'http://localhost:8000',
-	],
-)
-
 # DigitalOcean managed PostgreSQL database configuration
 DATABASES = {
 	'default': {
@@ -41,22 +27,41 @@ DATABASES = {
 	}
 }
 
-# Recommended basic security settings for production
+# Security
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
-SECURE_BROWSER_XSS_FILTER = True
-SECURE_CONTENT_TYPE_NOSNIFF = True
-X_FRAME_OPTIONS = 'DENY'
-# HTTPS/Security Settings
 SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=True)
 SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=True)
 CSRF_COOKIE_SECURE = env.bool('CSRF_COOKIE_SECURE', default=True)
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
 
-# CORS Settings
-CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
+# CORS
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[
+	'https://dzmedilink.netlify.app',
+	'https://dzmedilink.duckdns.org',
+	'http://localhost:3000',
+	'http://localhost:5173',
+])
 CORS_ALLOW_CREDENTIALS = env.bool('CORS_ALLOW_CREDENTIALS', default=True)
 
-# CSRF Settings
-CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
+# CSRF
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[
+	'https://dzmedilink.netlify.app',
+	'https://dzmedilink.duckdns.org',
+])
+
+# ---------------------------------------------------------------------------
+# Django Channels – Redis channel layer (overrides InMemoryChannelLayer from base.py)
+# Redis runs on the SAME droplet as Django, so localhost is correct.
+# If you switch to DigitalOcean Managed Redis, set REDIS_URL in .env.
+# ---------------------------------------------------------------------------
+CHANNEL_LAYERS = {
+	"default": {
+		"BACKEND": "channels_redis.core.RedisChannelLayer",
+		"CONFIG": {
+			"hosts": [env("REDIS_URL", default="redis://localhost:6379")],
+		},
+	},
+}
