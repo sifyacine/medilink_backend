@@ -42,7 +42,10 @@ ALLOWED_HOSTS = env.list(
 # Application definition
 
 INSTALLED_APPS = [
-    # Django core (MUST come first)
+    # Daphne ASGI server (MUST come first for runserver to use ASGI)
+    'daphne',
+
+    # Django core
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
