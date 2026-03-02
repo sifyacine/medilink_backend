@@ -76,33 +76,32 @@ class NotificationService:
         Returns:
             bool: True if at least one message was sent successfully
         """
+        # Always persist the in-app notification to DB first, regardless of
+        # whether the user has FCM tokens or whether Firebase is configured.
+        # This ensures the notification bell always reflects real activity.
+        NotificationService._save_notification(
+            user=user,
+            title=title,
+            body=body,
+            data=data,
+        )
+
         tokens = list(DeviceToken.objects.filter(
             user=user,
             is_active=True
         ).values_list('token', flat=True))
-        
+
         if not tokens:
             logger.debug(f"No active tokens found for user {user.id}")
             return False
-        
-        sent_success = NotificationService._send_to_tokens(
+
+        return NotificationService._send_to_tokens(
             tokens=tokens,
             title=title,
             body=body,
             image_url=image_url,
-            data=data
+            data=data,
         )
-        
-        # Save to database for history
-        if sent_success:
-            NotificationService._save_notification(
-                user=user,
-                title=title,
-                body=body,
-                data=data
-            )
-            
-        return sent_success
     
     @staticmethod
     def send_to_users(users, title: str, body: str, image_url: str = None, data: dict = None) -> bool:
