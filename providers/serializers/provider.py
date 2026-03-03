@@ -2,9 +2,13 @@
 Provider serializers.
 """
 from rest_framework import serializers
+from django.contrib.contenttypes.models import ContentType
 
 from providers.models.provider import Provider
 from common.enums import ProviderStatus, ProviderType
+from reviews.models import ReviewAggregate
+from social_media.models import SocialMediaLink
+from social_media.serializers import SocialMediaLinkSerializer
 
 
 class ProviderPublicListSerializer(serializers.ModelSerializer):
@@ -28,7 +32,7 @@ class ProviderPublicListSerializer(serializers.ModelSerializer):
     years_of_experience = serializers.SerializerMethodField()
     is_available = serializers.SerializerMethodField()
     is_home_service_available = serializers.SerializerMethodField()
-    rating = serializers.SerializerMethodField()  # Future: average rating
+    rating = serializers.SerializerMethodField()  # Average rating + count
     
     # Location summary
     city = serializers.SerializerMethodField()
@@ -183,9 +187,21 @@ class ProviderPublicListSerializer(serializers.ModelSerializer):
         return False
     
     def get_rating(self, obj):
-        """Get average rating (placeholder for future implementation)."""
-        # TODO: Implement rating system
-        return None
+        """Get average rating and count for this provider."""
+        try:
+            ct = ContentType.objects.get_for_model(Provider)
+            aggregate = ReviewAggregate.objects.filter(
+                content_type=ct,
+                object_id=str(obj.id)
+            ).first()
+            if not aggregate:
+                return None
+            return {
+                'average': float(aggregate.average_rating),
+                'count': aggregate.review_count,
+            }
+        except Exception:
+            return None
     
     def get_city(self, obj):
         """Get primary city from address."""
@@ -215,6 +231,8 @@ class ProviderPublicDetailSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()
     services = serializers.SerializerMethodField()
     addresses = serializers.SerializerMethodField()
+    rating = serializers.SerializerMethodField()
+    social_links = serializers.SerializerMethodField()
     
     class Meta:
         model = Provider
@@ -229,6 +247,8 @@ class ProviderPublicDetailSerializer(serializers.ModelSerializer):
             'laboratory',
             'services',
             'addresses',
+            'rating',
+            'social_links',
             'created_at',
         ]
     
@@ -347,6 +367,43 @@ class ProviderPublicDetailSerializer(serializers.ModelSerializer):
             )
             return AddressSerializer(addresses, many=True).data
         except:
+            return []
+
+    def get_rating(self, obj):
+        """Return rating aggregate with distribution."""
+        try:
+            ct = ContentType.objects.get_for_model(Provider)
+            aggregate = ReviewAggregate.objects.filter(
+                content_type=ct,
+                object_id=str(obj.id)
+            ).first()
+            if not aggregate:
+                return None
+            return {
+                'average': float(aggregate.average_rating),
+                'count': aggregate.review_count,
+                'distribution': {
+                    1: aggregate.rating_1_count,
+                    2: aggregate.rating_2_count,
+                    3: aggregate.rating_3_count,
+                    4: aggregate.rating_4_count,
+                    5: aggregate.rating_5_count,
+                },
+            }
+        except Exception:
+            return None
+
+    def get_social_links(self, obj):
+        """Return visible social links for this provider."""
+        try:
+            ct = ContentType.objects.get_for_model(Provider)
+            links = SocialMediaLink.objects.filter(
+                content_type=ct,
+                object_id=obj.id,
+                is_visible=True,
+            ).order_by('display_order', 'platform')
+            return SocialMediaLinkSerializer(links, many=True).data
+        except Exception:
             return []
 
 
