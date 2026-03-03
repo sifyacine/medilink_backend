@@ -1,148 +1,126 @@
 import json
-from channels.generic.websocket import AsyncWebsocketConsumer
+import logging
+from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 
+logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-class NurseRequestConsumer(AsyncWebsocketConsumer):
+class NurseRequestConsumer(AsyncJsonWebsocketConsumer):
     """
     WebSocket consumer for real-time nurse request updates.
-    
-    Channels/Rooms:
-    - city_{city_name}_requests: Broadcasts to all nurses in a city
-    - request_{request_id}_updates: Updates for a specific request (patient & accepted nurse)
+
+    Groups a client is joined to (depending on role):
+    - ``user_<id>_nurse_requests``  — personal stream (both roles)
+    - ``request_<id>_updates``      — specific request (patient & accepted nurse)
+    - ``city_<city>_requests``      — city-wide broadcast for nurses
     """
-    
+
     async def connect(self):
-        """Handle WebSocket connection"""
-        self.user = self.scope['user']
-        
-        if not self.user.is_authenticated:
+        self.user = self.scope.get("user")
+        if not self.user or not self.user.is_authenticated:
             await self.close()
             return
-        
-        # Determine user type and setup appropriate channels
-        if await self.is_patient():
-            # Patients subscribe to their specific request updates
-            self.request_id = self.scope['url_route']['kwargs'].get('request_id')
-            if self.request_id:
-                self.room_group_name = f'request_{self.request_id}_updates'
-                await self.channel_layer.group_add(
-                    self.room_group_name,
-                    self.channel_name
-                )
-        
-        elif await self.is_nurse():
-            # Nurses subscribe to their city's request broadcasts
-            nurse = await self.get_nurse()
-            if nurse:
-                # TODO: Get nurse's city from their profile/location
-                # For now, use a default city
-                city = 'default_city'  # Replace with actual city logic
-                self.room_group_name = f'city_{city}_requests'
-                await self.channel_layer.group_add(
-                    self.room_group_name,
-                    self.channel_name
-                )
-        
+
+        self.groups_joined: list[str] = []
+
+        # Personal nurse-request stream for every authenticated user
+        personal_group = f"user_{self.user.id}_nurse_requests"
+        await self.channel_layer.group_add(personal_group, self.channel_name)
+        self.groups_joined.append(personal_group)
+
+        # If the URL contains a request_id, also join that request group
+        request_id = self.scope["url_route"]["kwargs"].get("request_id")
+        if request_id:
+            request_group = f"request_{request_id}_updates"
+            await self.channel_layer.group_add(request_group, self.channel_name)
+            self.groups_joined.append(request_group)
+
+        # If user is a nurse, also join their city channel
+        if await self.is_nurse():
+            city = await self.get_nurse_city()
+            if city:
+                city_group = f"city_{city.lower().replace(' ', '_')}_requests"
+                await self.channel_layer.group_add(city_group, self.channel_name)
+                self.groups_joined.append(city_group)
+
         await self.accept()
-    
+
     async def disconnect(self, close_code):
-        """Handle WebSocket disconnection"""
-        if hasattr(self, 'room_group_name'):
-            await self.channel_layer.group_discard(
-                self.room_group_name,
-                self.channel_name
-            )
-    
-    async def receive(self, text_data):
-        """
-        Handle incoming messages from WebSocket.
-        Not heavily used in this implementation as updates are server-driven.
-        """
-        try:
-            data = json.loads(text_data)
-            message_type = data.get('type')
-            
-            if message_type == 'ping':
-                await self.send(text_data=json.dumps({
-                    'type': 'pong',
-                    'timestamp': data.get('timestamp')
-                }))
-        except json.JSONDecodeError:
-            await self.send(text_data=json.dumps({
-                'error': 'Invalid JSON'
-            }))
-    
-    # Message handlers for different event types
-    async def new_request(self, event):
-        """
-        Broadcast new request to nurses in the area.
-        Triggered when a patient creates a request.
-        """
-        await self.send(text_data=json.dumps({
-            'type': 'new_request',
-            'request': event['request']
-        }))
-    
-    async def request_updated(self, event):
-        """
-        Send request update to patient.
-        Triggered when nurses respond or status changes.
-        """
-        await self.send(text_data=json.dumps({
-            'type': 'request_updated',
-            'request': event['request']
-        }))
-    
-    async def new_offer(self, event):
-        """
-        Notify patient of a new nurse offer.
-        """
-        await self.send(text_data=json.dumps({
-            'type': 'new_offer',
-            'offer': event['offer']
-        }))
-    
-    async def offer_accepted(self, event):
-        """
-        Notify nurse that their offer was accepted.
-        """
-        await self.send(text_data=json.dumps({
-            'type': 'offer_accepted',
-            'request': event['request']
-        }))
-    
-    async def request_cancelled(self, event):
-        """
-        Notify nurse that request was cancelled.
-        """
-        await self.send(text_data=json.dumps({
-            'type': 'request_cancelled',
-            'request_id': event['request_id'],
-            'reason': event.get('reason', '')
-        }))
-    
-    # Database query helpers
-    @database_sync_to_async
-    def is_patient(self):
-        """Check if user is a patient"""
-        return hasattr(self.user, 'patient')
-    
+        for group in getattr(self, "groups_joined", []):
+            await self.channel_layer.group_discard(group, self.channel_name)
+
+    # ------------------------------------------------------------------
+    # Incoming from client
+    # ------------------------------------------------------------------
+
+    async def receive_json(self, content, **kwargs):
+        msg_type = content.get("type", "")
+        if msg_type == "ping":
+            await self.send_json({"type": "pong"})
+
+    # ------------------------------------------------------------------
+    # Handlers for messages pushed FROM backend via channel layer
+    # ------------------------------------------------------------------
+
+    async def nurse_request_new(self, event):
+        """New request broadcast (city-wide or personal)."""
+        await self.send_json({"type": "nurse_request_new", "data": event.get("data", {})})
+
+    async def nurse_request_offer(self, event):
+        """A nurse submitted an offer."""
+        await self.send_json({"type": "nurse_request_offer", "data": event.get("data", {})})
+
+    async def nurse_request_accepted(self, event):
+        """Offer was accepted."""
+        await self.send_json({"type": "nurse_request_accepted", "data": event.get("data", {})})
+
+    async def nurse_request_in_progress(self, event):
+        """Service started."""
+        await self.send_json({"type": "nurse_request_in_progress", "data": event.get("data", {})})
+
+    async def nurse_request_completed(self, event):
+        """Service completed."""
+        await self.send_json({"type": "nurse_request_completed", "data": event.get("data", {})})
+
+    async def nurse_request_cancelled(self, event):
+        """Request cancelled."""
+        await self.send_json({"type": "nurse_request_cancelled", "data": event.get("data", {})})
+
+    # Generic catch-all
+    async def nurse_request_updated(self, event):
+        await self.send_json({"type": "nurse_request_updated", "data": event.get("data", {})})
+
+    # ------------------------------------------------------------------
+    # Database helpers
+    # ------------------------------------------------------------------
+
     @database_sync_to_async
     def is_nurse(self):
-        """Check if user is a nurse provider"""
-        return (
-            hasattr(self.user, 'provider') and
-            self.user.provider.provider_type == 'NURSE'
-        )
-    
-    @database_sync_to_async
-    def get_nurse(self):
-        """Get nurse provider object"""
         try:
-            return self.user.provider
-        except:
+            return (
+                hasattr(self.user, "provider_profile")
+                and self.user.provider_profile.provider_type == "NURSE"
+            )
+        except Exception:
+            return False
+
+    @database_sync_to_async
+    def get_nurse_city(self):
+        """Return the city from the nurse's primary address (or None)."""
+        try:
+            from address.models import Address
+            from django.contrib.contenttypes.models import ContentType
+
+            provider = self.user.provider_profile
+            ct = ContentType.objects.get_for_model(provider)
+            addr = (
+                Address.objects.filter(content_type=ct, object_id=provider.pk)
+                .order_by("-is_primary")
+                .first()
+            )
+            return addr.city if addr else None
+        except Exception:
             return None

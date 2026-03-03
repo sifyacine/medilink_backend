@@ -31,7 +31,10 @@ class NotificationType(models.TextChoices):
     
     # Nurse Requests
     NURSE_REQUEST_NEW = 'NURSE_REQUEST_NEW', 'New Nurse Request'
+    NURSE_REQUEST_OFFER = 'NURSE_REQUEST_OFFER', 'Nurse Offer Received'
+    NURSE_REQUEST_COUNTER_OFFER = 'NURSE_REQUEST_COUNTER_OFFER', 'Nurse Counter Offer'
     NURSE_REQUEST_ACCEPTED = 'NURSE_REQUEST_ACCEPTED', 'Nurse Request Accepted'
+    NURSE_REQUEST_IN_PROGRESS = 'NURSE_REQUEST_IN_PROGRESS', 'Nurse Service In Progress'
     NURSE_REQUEST_COMPLETED = 'NURSE_REQUEST_COMPLETED', 'Nurse Request Completed'
     NURSE_REQUEST_CANCELLED = 'NURSE_REQUEST_CANCELLED', 'Nurse Request Cancelled'
     

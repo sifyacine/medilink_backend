@@ -32,7 +32,7 @@ from .serializers import (
 from providers.models import Provider, Nurse
 from .permissions import IsPatient, IsNurse, IsRequestOwner
 from .services import NurseRequestService
-from .signals import request_created, request_status_changed
+from .signals import request_created, request_status_changed, nurse_offer_submitted
 
 
 # =============================================================================
@@ -592,7 +592,16 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
             )
         
         try:
+            old_status = request_obj.status
             updated_request = NurseRequestService.start_service(request_obj)
+
+            request_status_changed.send(
+                sender=self.__class__,
+                request=updated_request,
+                old_status=old_status,
+                new_status=updated_request.status,
+            )
+
             response_serializer = NurseServiceRequestDetailSerializer(updated_request)
             return Response({
                 'success': True,
@@ -618,7 +627,16 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
             )
         
         try:
+            old_status = request_obj.status
             updated_request = NurseRequestService.complete_service(request_obj)
+
+            request_status_changed.send(
+                sender=self.__class__,
+                request=updated_request,
+                old_status=old_status,
+                new_status=updated_request.status,
+            )
+
             response_serializer = NurseServiceRequestDetailSerializer(updated_request)
             return Response({
                 'success': True,
@@ -1194,11 +1212,10 @@ class NurseAvailableRequestsViewSet(viewsets.ReadOnlyModelViewSet):
             )
             
             # Send signal for real-time update to patient
-            request_status_changed.send(
+            nurse_offer_submitted.send(
                 sender=self.__class__,
                 request=request_obj,
-                old_status=RequestStatus.SEARCHING,
-                new_status=request_obj.status
+                offer=offer,
             )
             
             return Response({
@@ -1272,11 +1289,10 @@ class NurseAvailableRequestsViewSet(viewsets.ReadOnlyModelViewSet):
             )
             
             # Send signal for real-time update to patient
-            request_status_changed.send(
+            nurse_offer_submitted.send(
                 sender=self.__class__,
                 request=request_obj,
-                old_status=RequestStatus.SEARCHING,
-                new_status=request_obj.status
+                offer=offer,
             )
             
             return Response({

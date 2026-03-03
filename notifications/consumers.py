@@ -137,6 +137,25 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
     async def appointment_reminder(self, event):
         await self.send_json({"type": "appointment_reminder", "data": event.get("data", {})})
 
+    # Nurse request event handlers — forward to client
+    async def nurse_request_new(self, event):
+        await self.send_json({"type": "nurse_request_new", "data": event.get("data", {})})
+
+    async def nurse_request_offer(self, event):
+        await self.send_json({"type": "nurse_request_offer", "data": event.get("data", {})})
+
+    async def nurse_request_accepted(self, event):
+        await self.send_json({"type": "nurse_request_accepted", "data": event.get("data", {})})
+
+    async def nurse_request_in_progress(self, event):
+        await self.send_json({"type": "nurse_request_in_progress", "data": event.get("data", {})})
+
+    async def nurse_request_completed(self, event):
+        await self.send_json({"type": "nurse_request_completed", "data": event.get("data", {})})
+
+    async def nurse_request_cancelled(self, event):
+        await self.send_json({"type": "nurse_request_cancelled", "data": event.get("data", {})})
+
     # ------------------------------------------------------------------
     # Database helpers
     # ------------------------------------------------------------------

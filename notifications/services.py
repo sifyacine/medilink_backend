@@ -514,6 +514,12 @@ class WebSocketBroadcaster:
                 f"user_{user_id}_appointments",
                 {"type": message_type, "data": data},
             )
+        # Nurse-request stream
+        if "nurse_request" in message_type:
+            WebSocketBroadcaster._send(
+                f"user_{user_id}_nurse_requests",
+                {"type": message_type, "data": data},
+            )
 
 
 # ============================================
