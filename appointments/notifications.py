@@ -49,46 +49,18 @@ class AppointmentNotifier:
     @classmethod
     def _serialize_appointment_for_websocket(cls, appointment) -> Dict[str, Any]:
         """
-        Serialize appointment for WebSocket transmission.
-        
-        Returns a lightweight representation suitable for real-time updates.
-        Includes provider type for frontend to handle different provider UIs.
+        Serialize appointment for WebSocket transmission using the **full**
+        ``AppointmentDetailSerializer`` so connected clients can update their
+        UI state in-place without re-fetching from the REST API.
+
+        The serializer runs without a request context, so ``allowed_actions``
+        reflects generic status-based transitions (no user-specific permission
+        filtering).  The frontend can refine actions locally if needed.
         """
-        from common.utils import get_patient_display_name, get_provider_display_name
-        
-        from .models import AppointmentLocationType
-        
-        provider = appointment.provider
-        
-        # Derive helper fields from location_type
-        is_home_visit = appointment.location_type == AppointmentLocationType.HOME
-        is_virtual = appointment.location_type == AppointmentLocationType.ONLINE
-        
-        data = {
-            'id': str(appointment.pk),
-            'status': appointment.status,
-            'scheduled_date': appointment.scheduled_date.isoformat() if appointment.scheduled_date else None,
-            'scheduled_time': appointment.scheduled_time.strftime('%H:%M') if appointment.scheduled_time else "TBD",
-            'duration_minutes': appointment.duration_minutes,
-            'patient_name': get_patient_display_name(
-                patient_user=appointment.patient_user, 
-                patient_record=appointment.patient_record
-            ),
-            'provider_id': str(provider.id),
-            'provider_name': get_provider_display_name(provider),
-            'provider_type': provider.provider_type if hasattr(provider, 'provider_type') else None,
-            'service_name': appointment.service.name if appointment.service else None,
-            'location_type': appointment.location_type,
-            'is_home_visit': is_home_visit,
-            'is_virtual': is_virtual,
-            'created_at': appointment.created_at.isoformat(),
-        }
-        
-        # Add notes if present
-        if appointment.notes:
-            data['notes'] = appointment.notes[:200]  # Truncate for WebSocket
-        
-        return data
+        from .serializers import AppointmentDetailSerializer
+
+        serializer = AppointmentDetailSerializer(appointment)
+        return serializer.data
     
     @classmethod
     def notify_new_appointment(cls, appointment, created_by=None):
