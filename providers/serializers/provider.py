@@ -209,14 +209,21 @@ class ProviderPublicListSerializer(serializers.ModelSerializer):
         except Exception:
             return None
     
+    def _get_provider_addresses_qs(self, obj):
+        """Return queryset of addresses for this provider (checked against both Provider and User CTs)."""
+        from django.db.models import Q
+        from accounts.models import User
+        provider_ct = ContentType.objects.get_for_model(Provider)
+        user_ct = ContentType.objects.get_for_model(User)
+        return Address.objects.filter(
+            Q(content_type=provider_ct, object_id=obj.id) |
+            Q(content_type=user_ct, object_id=obj.user_id)
+        )
+
     def get_city(self, obj):
         """Get primary city from address."""
         try:
-            ct = ContentType.objects.get_for_model(Provider)
-            addr = Address.objects.filter(
-                content_type=ct,
-                object_id=obj.id
-            ).order_by('-is_primary', 'created_at').first()
+            addr = self._get_provider_addresses_qs(obj).order_by('-is_primary', 'created_at').first()
             return addr.city if addr else None
         except Exception:
             return None
@@ -224,11 +231,7 @@ class ProviderPublicListSerializer(serializers.ModelSerializer):
     def get_primary_address(self, obj):
         """Return the provider's primary address (full details) for quick access."""
         try:
-            ct = ContentType.objects.get_for_model(Provider)
-            addr = Address.objects.filter(
-                content_type=ct,
-                object_id=obj.id
-            ).order_by('-is_primary', 'created_at').first()
+            addr = self._get_provider_addresses_qs(obj).order_by('-is_primary', 'created_at').first()
             return AddressSerializer(addr).data if addr else None
         except Exception:
             return None
@@ -422,17 +425,17 @@ class ProviderPublicDetailSerializer(serializers.ModelSerializer):
         return []
     
     def get_addresses(self, obj):
-        """Get provider addresses."""
+        """Get provider addresses (checks both Provider and User content types)."""
         try:
-            from django.contrib.contenttypes.models import ContentType
-            from address.models import Address
-            from address.serializers import AddressSerializer
-            
+            from django.db.models import Q
+            from accounts.models import User
+
             provider_ct = ContentType.objects.get_for_model(Provider)
+            user_ct = ContentType.objects.get_for_model(User)
             addresses = Address.objects.filter(
-                content_type=provider_ct,
-                object_id=obj.id,
-            )
+                Q(content_type=provider_ct, object_id=obj.id) |
+                Q(content_type=user_ct, object_id=obj.user_id)
+            ).order_by('-is_primary', 'created_at')
             return AddressSerializer(addresses, many=True).data
         except:
             return []
