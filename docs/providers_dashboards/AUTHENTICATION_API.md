@@ -862,6 +862,11 @@ These fields cannot be changed via the API:
 }
 ```
 
+### Pricing & Scheduling Notes
+
+- Retrieve consultation fees from your authenticated profile via `GET /api/auth/me/`. The doctor block in the response exposes `consultation_price`, `home_visit_price`, `online_consultation_price`, `currency`, and the detailed `services` list (each service carries `price` and `final_price`).
+- No time selection is required on the dashboard when initiating a reschedule: the doctor selects the new time while performing the reschedule action. Client forms should avoid making time mandatory for rescheduling flows.
+
 ---
 
 ## Managing Addresses

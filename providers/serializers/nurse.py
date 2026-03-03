@@ -124,8 +124,9 @@ class NursePublicSerializer(serializers.ModelSerializer):
     """
     full_name = serializers.SerializerMethodField()
     gender_display = serializers.CharField(source='get_gender_display', read_only=True)
+    email = serializers.EmailField(source='provider.user.email', read_only=True)
     services = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Nurse
         fields = [
@@ -133,6 +134,8 @@ class NursePublicSerializer(serializers.ModelSerializer):
             'first_name',
             'last_name',
             'full_name',
+            'email',
+            'phone_number',
             'gender',
             'gender_display',
             'profile_image',
@@ -144,7 +147,7 @@ class NursePublicSerializer(serializers.ModelSerializer):
             'services',
             'created_at',
         ]
-        # Exclude: license_number, degree_document, phone_number, date_of_birth, entrepreneur cards
+        # Exclude: license_number, degree_document, date_of_birth, entrepreneur cards
     
     def get_full_name(self, obj):
         return f"{obj.first_name} {obj.last_name}"

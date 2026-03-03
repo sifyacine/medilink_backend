@@ -78,12 +78,14 @@ class ClinicCreateSerializer(serializers.ModelSerializer):
 class ClinicPublicSerializer(serializers.ModelSerializer):
     """Public serializer for Clinic profiles - excludes sensitive business info."""
     services = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Clinic
         fields = [
             'id',
             'clinic_name',
+            'phone_number',
+            'email',
             'logo',
             'website',
             'description',

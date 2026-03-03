@@ -28,6 +28,43 @@ This doc describes the full appointment UX flow, the REST/WebSocket endpoints to
 - Addresses: provided in provider detail serializer via generic Address relation; provider list now also returns the primary address for quick access (choose primary in address data to control what shows).
 - Ratings/social: see notes above (not wired into provider public serializer yet).
 
+### Example: Provider detail (doctor)
+
+```json
+{
+   "id": "prov-123",
+   "provider_type": "DOCTOR",
+   "name": "Dr. Jane Doe",
+   "rating": {"average": 4.7, "count": 128, "distribution": {"5": 90, "4": 28, "3": 8, "2": 1, "1": 1}},
+   "social_links": [
+      {"platform": "FACEBOOK", "platform_display": "Facebook", "url": "https://fb.com/drjane", "custom_label": null},
+      {"platform": "LINKEDIN", "platform_display": "LinkedIn", "url": "https://linkedin.com/in/drjane", "custom_label": null}
+   ],
+   "services": [
+      {"id": 201, "title": "General Consultation", "description": "30 min in-clinic", "price": "3500.00", "duration_minutes": 30, "is_home_service": false},
+      {"id": 202, "title": "Home Visit", "description": "Home check-up", "price": "5000.00", "duration_minutes": 45, "is_home_service": true}
+   ],
+   "doctor": {
+      "full_name": "Dr. Jane Doe",
+      "gender_display": "Female",
+      "years_of_experience": 12,
+      "biography": "Family medicine specialist...",
+      "consultation_price": "3500.00",
+      "home_visit_price": "5000.00",
+      "online_consultation_price": "3000.00",
+      "currency": "DZD",
+      "specialties": [
+         {"id": 10, "title": "Family Medicine", "slug": "family-medicine", "is_primary": true}
+      ]
+   },
+   "addresses": [
+      {"id": 1, "street": "12 Clinic St", "city": "Algiers", "state": "AL", "zip_code": "16000", "country": "Algeria", "is_primary": true, "address_type": "CLINIC"},
+      {"id": 2, "street": "45 Home Ave", "city": "Algiers", "state": "AL", "zip_code": "16010", "country": "Algeria", "is_primary": false, "address_type": "HOME"}
+   ],
+   "primary_address": {"id": 1, "street": "12 Clinic St", "city": "Algiers", "state": "AL", "zip_code": "16000", "country": "Algeria", "is_primary": true, "address_type": "CLINIC"}
+}
+```
+
 ## Booking flow (patient side)
 1) User opens provider detail (public endpoint).
 2) User taps “Book now”. Show:
@@ -40,6 +77,22 @@ This doc describes the full appointment UX flow, the REST/WebSocket endpoints to
    - Validation: date/time not in past; provider availability + double-booking; provider daily limit; home address required for HOME.
    - Status: new appointment is `PENDING`.
    - Notifications/WebSocket: `new_appointment` sent to provider groups and appointment group.
+
+### Example: Appointment create request
+
+```json
+{
+   "provider": "prov-123",
+   "service_ids": [201, 202],
+   "scheduled_date": "2026-03-10",
+   "scheduled_time": "15:30:00",
+   "duration_minutes": 45,
+   "location_type": "CLINIC",
+   "clinic_address": 1,
+   "reason": "Follow-up for blood pressure",
+   "notes": "Prefer afternoon slots"
+}
+```
 4) Provider confirms/rejects:
    - Confirm: `POST /api/appointments/{id}/confirm/` (provider only). For ONLINE, must pass `meeting_link`. Status -> `CONFIRMED`; WS `appointment_confirmed` to patient + group.
    - Reject: `POST /api/appointments/{id}/reject/` with `rejection_reason`. Status -> `REJECTED`; WS `appointment_rejected` to patient + group.
@@ -73,6 +126,63 @@ This doc describes the full appointment UX flow, the REST/WebSocket endpoints to
 - Booking form: provider id, date/time, location type, address (if HOME), services multi-select (or none for consultation), notes/reason. Validate time is in future; display provider-specific booking errors to user.
 - Post-booking: listen on WS; refresh appointment detail on any event type; show meeting link after provider confirms ONLINE.
 - Show allowed actions per appointment using `allowed_actions` from appointment list/detail serializers (avoid showing buttons the server will reject).
+
+## Appointment UI building blocks
+
+### Appointment card (list item)
+- Required fields from appointment list serializer: `id`, `provider_name`, `patient_name` (if patient-facing skip), `service_name` or `selected_services`, `scheduled_date`, `scheduled_time`, `location_type_display`, `status_display`, `is_upcoming`, `allowed_actions`.
+- Optional enrich: `meeting_link` when status is `CONFIRMED` and location `ONLINE`.
+
+Example card payload snippet:
+```json
+{
+   "id": "appt-789",
+   "provider": "prov-123",
+   "provider_name": "Dr. Jane Doe",
+   "patient_name": "You",
+   "service_name": "General Consultation",
+   "scheduled_date": "2026-03-10",
+   "scheduled_time": "15:30:00",
+   "location_type_display": "At Clinic",
+   "status": "PENDING",
+   "status_display": "Pending",
+   "is_upcoming": true,
+   "allowed_actions": {
+      "can_confirm": false,
+      "can_cancel": true,
+      "can_reschedule": true
+   }
+}
+```
+
+### Appointment detail
+- Fields from detail serializer: provider info (name/email/type), patient info (name/email/phone), `selected_services` (with prices), `total_price`, `scheduled_date/time`, `location_type`, addresses, `meeting_link`, `status`, `reason`, `notes`, cancellation info, `allowed_actions`, timestamps.
+
+Example detail payload snippet:
+```json
+{
+   "id": "appt-789",
+   "provider_name": "Dr. Jane Doe",
+   "provider_email": "jane@example.com",
+   "patient_name": "You",
+   "selected_services": [
+      {"service_id": "201", "service_name": "General Consultation", "price": "3500.00", "currency": "DZD"},
+      {"service_id": "202", "service_name": "Home Visit", "price": "5000.00", "currency": "DZD"}
+   ],
+   "total_price": "8500.00",
+   "scheduled_date": "2026-03-10",
+   "scheduled_time": "15:30:00",
+   "duration_minutes": 45,
+   "location_type": "CLINIC",
+   "clinic_address": 1,
+   "meeting_link": null,
+   "status": "PENDING",
+   "reason": "Follow-up for blood pressure",
+   "notes": "Prefer afternoon slots",
+   "allowed_actions": {"can_cancel": true, "can_reschedule": true, "can_confirm": false},
+   "created_at": "2026-03-02T11:00:00Z"
+}
+```
 
 ## Known gaps / TODOs
 - (None for providers in this flow) — city summary now present; keep an eye on data completeness of addresses.

@@ -158,9 +158,20 @@ class DoctorPublicSerializer(serializers.ModelSerializer):
     """
     full_name = serializers.SerializerMethodField()
     gender_display = serializers.CharField(source='get_gender_display', read_only=True)
+    email = serializers.EmailField(source='provider.user.email', read_only=True)
     specialties = serializers.SerializerMethodField()
     services = serializers.SerializerMethodField()
-    
+    consultation_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True
+    )
+    home_visit_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True
+    )
+    online_consultation_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, read_only=True
+    )
+    currency = serializers.CharField(read_only=True)
+
     class Meta:
         model = Doctor
         fields = [
@@ -168,18 +179,24 @@ class DoctorPublicSerializer(serializers.ModelSerializer):
             'first_name',
             'last_name',
             'full_name',
+            'email',
+            'phone_number',
             'gender',
             'gender_display',
             'profile_image',
             'years_of_experience',
             'biography',
+            'consultation_price',
+            'home_visit_price',
+            'online_consultation_price',
+            'currency',
             'is_available',
             'is_home_service_available',
             'specialties',
             'services',
             'created_at',
         ]
-        # Exclude: license_number, degree_document, phone_number, date_of_birth
+        # Exclude: license_number, degree_document, date_of_birth
     
     def get_full_name(self, obj):
         return f"Dr. {obj.first_name} {obj.last_name}"

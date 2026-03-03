@@ -36,10 +36,11 @@ class ProviderPublicListSerializer(serializers.ModelSerializer):
     is_home_service_available = serializers.SerializerMethodField()
     rating = serializers.SerializerMethodField()  # Average rating + count
     primary_address = serializers.SerializerMethodField()
-    
+    social_links = serializers.SerializerMethodField()
+
     # Location summary
     city = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Provider
         fields = [
@@ -55,6 +56,7 @@ class ProviderPublicListSerializer(serializers.ModelSerializer):
             'rating',
             'city',
             'primary_address',
+            'social_links',
             'created_at',
         ]
     
@@ -231,6 +233,19 @@ class ProviderPublicListSerializer(serializers.ModelSerializer):
         except Exception:
             return None
 
+    def get_social_links(self, obj):
+        """Return visible social links for this provider."""
+        try:
+            ct = ContentType.objects.get_for_model(Provider)
+            links = SocialMediaLink.objects.filter(
+                content_type=ct,
+                object_id=obj.id,
+                is_visible=True,
+            ).order_by('display_order', 'platform')
+            return SocialMediaLinkSerializer(links, many=True).data
+        except Exception:
+            return []
+
 
 class ProviderPublicDetailSerializer(serializers.ModelSerializer):
     """
@@ -252,11 +267,13 @@ class ProviderPublicDetailSerializer(serializers.ModelSerializer):
     
     # Common computed fields
     name = serializers.SerializerMethodField()
+    phone_number = serializers.SerializerMethodField()
+    email = serializers.SerializerMethodField()
     services = serializers.SerializerMethodField()
     addresses = serializers.SerializerMethodField()
     rating = serializers.SerializerMethodField()
     social_links = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Provider
         fields = [
@@ -264,6 +281,8 @@ class ProviderPublicDetailSerializer(serializers.ModelSerializer):
             'provider_type',
             'provider_type_display',
             'name',
+            'phone_number',
+            'email',
             'doctor',
             'nurse',
             'clinic',
@@ -300,7 +319,33 @@ class ProviderPublicDetailSerializer(serializers.ModelSerializer):
             except:
                 pass
         return "Unknown Provider"
-    
+
+    def get_phone_number(self, obj):
+        """Get contact phone number from the relevant sub-profile."""
+        try:
+            if obj.provider_type == ProviderType.DOCTOR:
+                return obj.doctor_profile.phone_number
+            elif obj.provider_type == ProviderType.NURSE:
+                return obj.nurse_profile.phone_number
+            elif obj.provider_type == ProviderType.CLINIC:
+                return obj.clinic_profile.phone_number
+            elif obj.provider_type == ProviderType.LABORATORY:
+                return obj.laboratory_profile.phone_number
+        except Exception:
+            pass
+        return None
+
+    def get_email(self, obj):
+        """Get contact email - clinic own email, otherwise provider user email."""
+        try:
+            if obj.provider_type == ProviderType.CLINIC:
+                clinic_email = getattr(obj.clinic_profile, 'email', None)
+                if clinic_email:
+                    return clinic_email
+            return obj.user.email
+        except Exception:
+            return None
+
     def get_doctor(self, obj):
         """Get doctor profile if provider is a doctor."""
         if obj.provider_type != ProviderType.DOCTOR:
