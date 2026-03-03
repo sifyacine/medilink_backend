@@ -64,9 +64,15 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     - GET /invoices/overdue/ - Get overdue invoices
     """
     permission_classes = [IsAuthenticated]
+    search_fields = ['invoice_number', 'patient_user__first_name',
+                     'patient_user__last_name', 'patient_record__first_name',
+                     'patient_record__last_name']
+    ordering_fields = ['created_at', 'issue_date', 'due_date', 'total',
+                       'status', 'invoice_type']
+    ordering = ['-created_at']
     
     def get_queryset(self):
-        """Filter invoices based on user role."""
+        """Filter invoices based on user role and query parameters."""
         user = self.request.user
         queryset = Invoice.objects.select_related(
             'provider', 'provider__user',
@@ -75,20 +81,36 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         ).prefetch_related('items', 'payments')
         
         if user.role == UserRole.ADMIN:
-            return queryset
-        
-        if user.role == UserRole.PROVIDER:
+            pass  # no extra filter
+        elif user.role == UserRole.PROVIDER:
             if hasattr(user, 'provider_profile'):
-                return queryset.filter(provider=user.provider_profile)
-            return queryset.none()
-        
-        if user.role == UserRole.PATIENT:
-            return queryset.filter(
+                queryset = queryset.filter(provider=user.provider_profile)
+            else:
+                return queryset.none()
+        elif user.role == UserRole.PATIENT:
+            queryset = queryset.filter(
                 Q(patient_user=user) |
                 Q(patient_record__linked_user=user)
             )
+        else:
+            return queryset.none()
         
-        return queryset.none()
+        # ---- Query-parameter filters ----
+        params = self.request.query_params
+        
+        if params.get('status'):
+            queryset = queryset.filter(status=params['status'])
+        
+        if params.get('invoice_type'):
+            queryset = queryset.filter(invoice_type=params['invoice_type'])
+        
+        if params.get('start_date'):
+            queryset = queryset.filter(issue_date__gte=params['start_date'])
+        
+        if params.get('end_date'):
+            queryset = queryset.filter(issue_date__lte=params['end_date'])
+        
+        return queryset
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -97,6 +119,15 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return InvoiceCreateSerializer
         return InvoiceSerializer
+    
+    def create(self, request, *args, **kwargs):
+        """Create invoice and return full serializer response."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        invoice = serializer.save()
+        # Return full detail representation (with id, invoice_number, totals, etc.)
+        response_serializer = InvoiceSerializer(invoice, context={'request': request})
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
     
     def get_permissions(self):
         """Return appropriate permissions based on action."""
