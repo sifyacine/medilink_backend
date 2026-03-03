@@ -66,6 +66,10 @@ def handle_appointment_save(sender, instance, created, **kwargs):
             else:
                 if previous_status != current_status:
                     _handle_status_change(fresh, previous_status, current_status)
+                else:
+                    # Non-status field update (notes, meeting_link, services, etc.)
+                    # Broadcast a lightweight WS event so open dashboards stay in sync.
+                    _broadcast_generic_update(fresh)
         except Appointment.DoesNotExist:
             logger.warning("Appointment %s no longer exists, skipping notification", appointment_id)
         except Exception as e:
@@ -173,3 +177,45 @@ def _add_patient_to_provider_list(appointment):
             f"Patient {patient_record.patient_unique_id} added to provider "
             f"{provider.id}'s patient list via appointment {appointment.pk}"
         )
+
+
+def _broadcast_generic_update(appointment):
+    """
+    Broadcast a lightweight ``appointment_updated`` WebSocket event when
+    non-status fields change (e.g. notes, meeting_link, services).
+
+    This keeps every open dashboard/detail page in sync without creating
+    a full in-app notification.
+    """
+    from notifications.services import WebSocketBroadcaster
+
+    try:
+        data = AppointmentNotifier._serialize_appointment_for_websocket(appointment)
+        ws_payload = {
+            'appointment': data,
+            'message': 'Appointment details updated',
+        }
+
+        # Push to provider
+        WebSocketBroadcaster.send_to_provider(
+            provider_id=appointment.provider.id,
+            message_type='appointment_updated',
+            data=ws_payload,
+        )
+
+        # Push to patient
+        if appointment.patient_user:
+            WebSocketBroadcaster.send_to_patient(
+                user_id=appointment.patient_user.id,
+                message_type='appointment_updated',
+                data=ws_payload,
+            )
+
+        # Push to appointment-specific group
+        WebSocketBroadcaster.send_to_appointment(
+            appointment_id=appointment.pk,
+            message_type='appointment_updated',
+            data=ws_payload,
+        )
+    except Exception as e:
+        logger.error("Error broadcasting generic appointment update: %s", e)

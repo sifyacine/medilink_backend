@@ -199,6 +199,15 @@ class AppointmentNotifier:
             message_type='appointment_confirmed',
             data=ws_data,
         )
+        # Also push to provider so their other open tabs/devices update instantly
+        WebSocketBroadcaster.send_to_provider(
+            provider_id=appointment.provider.id,
+            message_type='appointment_confirmed',
+            data={
+                'appointment': appointment_data,
+                'message': 'Appointment confirmed',
+            },
+        )
         cls._broadcast_to_appointment_group(appointment, 'appointment_confirmed', ws_data)
     
     @classmethod
@@ -454,6 +463,15 @@ class AppointmentNotifier:
                 data=ws_data,
             )
 
+        # Push to provider so their list/detail updates instantly
+        WebSocketBroadcaster.send_to_provider(
+            provider_id=appointment.provider.id,
+            message_type='appointment_completed',
+            data={
+                'appointment': appointment_data,
+                'message': f'Appointment completed',
+            },
+        )
         # Broadcast to appointment group
         cls._broadcast_to_appointment_group(appointment, 'appointment_completed', {
             'appointment': appointment_data,
@@ -501,6 +519,16 @@ class AppointmentNotifier:
             message_type='appointment_rejected',
             data=ws_data,
         )
+        # Push to provider so their list/detail updates instantly
+        WebSocketBroadcaster.send_to_provider(
+            provider_id=appointment.provider.id,
+            message_type='appointment_rejected',
+            data={
+                'appointment': appointment_data,
+                'reason': reason,
+                'message': f'You declined the appointment request',
+            },
+        )
         cls._broadcast_to_appointment_group(appointment, 'appointment_rejected', ws_data)
 
     @classmethod
@@ -540,5 +568,14 @@ class AppointmentNotifier:
             user_id=patient_user.id,
             message_type='appointment_no_show',
             data=ws_data,
+        )
+        # Push to provider so their list/detail updates instantly
+        WebSocketBroadcaster.send_to_provider(
+            provider_id=appointment.provider.id,
+            message_type='appointment_no_show',
+            data={
+                'appointment': appointment_data,
+                'message': f'Appointment marked as no-show',
+            },
         )
         cls._broadcast_to_appointment_group(appointment, 'appointment_no_show', ws_data)
