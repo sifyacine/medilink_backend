@@ -25,7 +25,7 @@ This doc describes the full appointment UX flow, the REST/WebSocket endpoints to
 - Services (for booking): from doctor/nurse public serializer — each has `id`, `title`, `description`, `price` (custom if set, else base), `duration_minutes`, `is_home_service`.
 - Consultation pricing: doctor profile carries `consultation_price`, `home_visit_price`, `online_consultation_price`, `currency` ([providers/models/doctor.py](../providers/models/doctor.py#L60-L140)). If the user leaves “services” empty during booking, treat it as consultation-only and price from these fields.
 - Daily appointment limit: `Provider.daily_appointment_limit` (default 0 = unlimited). If you want a limit of 20/day, set this field to 20 on the provider; booking create validates against this.
-- Addresses: provided in provider detail serializer via generic Address relation.
+- Addresses: provided in provider detail serializer via generic Address relation; provider list now also returns the primary address for quick access (choose primary in address data to control what shows).
 - Ratings/social: see notes above (not wired into provider public serializer yet).
 
 ## Booking flow (patient side)
@@ -75,6 +75,4 @@ This doc describes the full appointment UX flow, the REST/WebSocket endpoints to
 - Show allowed actions per appointment using `allowed_actions` from appointment list/detail serializers (avoid showing buttons the server will reject).
 
 ## Known gaps / TODOs
-- Ratings are not yet exposed in provider public serializers; need to fetch ReviewAggregate or extend serializer.
-- Social media links not yet exposed in provider public serializers; fetch `SocialMediaLink` by content type/object id if needed.
-- City/location summary in provider list is TODO in serializer.
+- (None for providers in this flow) — city summary now present; keep an eye on data completeness of addresses.

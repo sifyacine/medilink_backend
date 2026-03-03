@@ -9,6 +9,8 @@ from common.enums import ProviderStatus, ProviderType
 from reviews.models import ReviewAggregate
 from social_media.models import SocialMediaLink
 from social_media.serializers import SocialMediaLinkSerializer
+from address.models import Address
+from address.serializers import AddressSerializer
 
 
 class ProviderPublicListSerializer(serializers.ModelSerializer):
@@ -33,6 +35,7 @@ class ProviderPublicListSerializer(serializers.ModelSerializer):
     is_available = serializers.SerializerMethodField()
     is_home_service_available = serializers.SerializerMethodField()
     rating = serializers.SerializerMethodField()  # Average rating + count
+    primary_address = serializers.SerializerMethodField()
     
     # Location summary
     city = serializers.SerializerMethodField()
@@ -51,6 +54,7 @@ class ProviderPublicListSerializer(serializers.ModelSerializer):
             'is_home_service_available',
             'rating',
             'city',
+            'primary_address',
             'created_at',
         ]
     
@@ -205,8 +209,27 @@ class ProviderPublicListSerializer(serializers.ModelSerializer):
     
     def get_city(self, obj):
         """Get primary city from address."""
-        # TODO: Implement address lookup
-        return None
+        try:
+            ct = ContentType.objects.get_for_model(Provider)
+            addr = Address.objects.filter(
+                content_type=ct,
+                object_id=obj.id
+            ).order_by('-is_primary', 'created_at').first()
+            return addr.city if addr else None
+        except Exception:
+            return None
+
+    def get_primary_address(self, obj):
+        """Return the provider's primary address (full details) for quick access."""
+        try:
+            ct = ContentType.objects.get_for_model(Provider)
+            addr = Address.objects.filter(
+                content_type=ct,
+                object_id=obj.id
+            ).order_by('-is_primary', 'created_at').first()
+            return AddressSerializer(addr).data if addr else None
+        except Exception:
+            return None
 
 
 class ProviderPublicDetailSerializer(serializers.ModelSerializer):
