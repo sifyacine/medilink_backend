@@ -10,6 +10,7 @@ Automatically adds patients to provider's patient list on confirmation.
 """
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
+from django.db import transaction
 import logging
 
 from .models import Appointment, AppointmentStatus
@@ -39,31 +40,38 @@ def track_appointment_status_change(sender, instance, **kwargs):
 def handle_appointment_save(sender, instance, created, **kwargs):
     """
     Handle appointment save events and create appropriate notifications.
-    
-    Uses AppointmentNotifier for:
-    - Real-time WebSocket delivery (doctor sees instantly)
-    - FCM push notifications (mobile/web)
-    - In-app notification storage
+
+    Uses transaction.on_commit() so that WebSocket broadcasts and FCM pushes
+    fire AFTER the database transaction is committed — this prevents the
+    frontend from fetching stale data when it receives the WS event.
     """
-    try:
-        if created:
-            # New appointment created
-            AppointmentNotifier.notify_new_appointment(
-                appointment=instance,
-                created_by=instance.created_by
-            )
-        else:
-            previous_status = _previous_status.get(instance.pk)
-            current_status = instance.status
-            
-            if previous_status != current_status:
-                _handle_status_change(instance, previous_status, current_status)
-            
-            # Cleanup
-            if instance.pk in _previous_status:
-                del _previous_status[instance.pk]
-    except Exception as e:
-        logger.error(f"Error handling appointment save signal: {e}")
+    # Capture values before the lambda closes over the mutable instance
+    appointment_id = instance.pk
+    is_created = created
+    previous_status = _previous_status.pop(instance.pk, None)
+    current_status = instance.status
+
+    def _notify():
+        try:
+            # Re-fetch the appointment so any deferred fields are available
+            fresh = Appointment.objects.select_related(
+                'provider', 'patient_user', 'patient_record', 'service'
+            ).get(pk=appointment_id)
+
+            if is_created:
+                AppointmentNotifier.notify_new_appointment(
+                    appointment=fresh,
+                    created_by=fresh.created_by,
+                )
+            else:
+                if previous_status != current_status:
+                    _handle_status_change(fresh, previous_status, current_status)
+        except Appointment.DoesNotExist:
+            logger.warning("Appointment %s no longer exists, skipping notification", appointment_id)
+        except Exception as e:
+            logger.error("Error in post-commit appointment notification: %s", e)
+
+    transaction.on_commit(_notify)
 
 
 def _handle_status_change(appointment, old_status, new_status):

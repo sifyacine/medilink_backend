@@ -556,3 +556,46 @@ class AppointmentService:
             )
         
         return queryset.order_by('-scheduled_date', '-scheduled_time')
+
+    @classmethod
+    def auto_cancel_past_appointments(cls, grace_minutes: int = 15) -> int:
+        """
+        Auto-cancel appointments whose scheduled start time has passed.
+
+        - Targets only active statuses (PENDING/CONFIRMED/RESCHEDULED)
+        - Applies a small grace period (default 15 minutes)
+        - Marks them as CANCELLED with reason NO_RESPONSE
+        - Lets post_save signals broadcast notifications
+        """
+        from .models import CancellationReason
+
+        now = timezone.now()
+        cutoff = now - timedelta(minutes=grace_minutes)
+
+        # Build cutoff conditions: past date, or today with time already passed
+        past_q = Q(scheduled_date__lt=cutoff.date()) | (
+            Q(scheduled_date=cutoff.date()) &
+            Q(scheduled_time__isnull=False) &
+            Q(scheduled_time__lt=cutoff.time())
+        )
+
+        queryset = Appointment.objects.filter(
+            status__in=list(AppointmentStatusTransition.ACTIVE_STATUSES)
+        ).filter(past_q)
+
+        count = 0
+        for appt in queryset.select_related('provider', 'patient_user'):
+            try:
+                # Cancellation notes kept succinct for audit and notifications
+                appt.cancel(
+                    cancelled_by=None,
+                    reason=CancellationReason.NO_RESPONSE,
+                    notes='Auto-cancelled: scheduled time passed without completion.',
+                    save=True,
+                )
+                count += 1
+            except Exception:
+                # Fail soft per appointment to allow others to continue
+                continue
+
+        return count

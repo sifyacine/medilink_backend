@@ -111,6 +111,32 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
             "count": event.get("count", 0),
         })
 
+    # Appointment event handlers — forward all to the client as-is
+    # so the browser notification bell and toast system receive them.
+    async def new_appointment(self, event):
+        await self.send_json({"type": "new_appointment", "data": event.get("data", {})})
+
+    async def appointment_confirmed(self, event):
+        await self.send_json({"type": "appointment_confirmed", "data": event.get("data", {})})
+
+    async def appointment_rejected(self, event):
+        await self.send_json({"type": "appointment_rejected", "data": event.get("data", {})})
+
+    async def appointment_cancelled(self, event):
+        await self.send_json({"type": "appointment_cancelled", "data": event.get("data", {})})
+
+    async def appointment_rescheduled(self, event):
+        await self.send_json({"type": "appointment_rescheduled", "data": event.get("data", {})})
+
+    async def appointment_completed(self, event):
+        await self.send_json({"type": "appointment_completed", "data": event.get("data", {})})
+
+    async def appointment_no_show(self, event):
+        await self.send_json({"type": "appointment_no_show", "data": event.get("data", {})})
+
+    async def appointment_reminder(self, event):
+        await self.send_json({"type": "appointment_reminder", "data": event.get("data", {})})
+
     # ------------------------------------------------------------------
     # Database helpers
     # ------------------------------------------------------------------

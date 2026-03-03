@@ -277,6 +277,51 @@ class AppointmentNotifier:
                     data=ws_cancel_data_prov,
                 )
                 cls._broadcast_to_appointment_group(appointment, 'appointment_cancelled', ws_cancel_data_prov)
+
+        # System/auto cancellation: notify both sides when possible
+        else:
+            ws_cancel_data_auto = {
+                'appointment_id': str(appointment.pk),
+                'appointment': appointment_data,
+                'cancelled_by': 'system',
+                'reason': reason_text,
+                'message': 'Appointment auto-cancelled after the scheduled time elapsed.',
+            }
+
+            # Provider notification
+            NotificationService.create_for_object(
+                recipient=provider_user,
+                title='❌ Appointment Auto-Cancelled',
+                message=f'Appointment with {patient_name} on {date_str} auto-cancelled. Reason: {reason_text}',
+                related_object=appointment,
+                notification_type=NotificationType.APPOINTMENT_CANCELLED,
+                priority=NotificationPriority.HIGH,
+                action_url=f'/appointments/{appointment.pk}',
+            )
+            WebSocketBroadcaster.send_to_provider(
+                provider_id=appointment.provider.id,
+                message_type='appointment_cancelled',
+                data=ws_cancel_data_auto,
+            )
+
+            # Patient notification (if a user exists)
+            if patient_user:
+                NotificationService.create_for_object(
+                    recipient=patient_user,
+                    title='❌ Appointment Auto-Cancelled',
+                    message=f'Your appointment with {provider_name} on {date_str} auto-cancelled. Reason: {reason_text}',
+                    related_object=appointment,
+                    notification_type=NotificationType.APPOINTMENT_CANCELLED,
+                    priority=NotificationPriority.HIGH,
+                    action_url=f'/appointments/{appointment.pk}',
+                )
+                WebSocketBroadcaster.send_to_patient(
+                    user_id=patient_user.id,
+                    message_type='appointment_cancelled',
+                    data=ws_cancel_data_auto,
+                )
+
+            cls._broadcast_to_appointment_group(appointment, 'appointment_cancelled', ws_cancel_data_auto)
     
     @classmethod
     def notify_appointment_rescheduled(cls, appointment, rescheduled_by=None):
