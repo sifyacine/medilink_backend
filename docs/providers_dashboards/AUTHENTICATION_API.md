@@ -869,6 +869,168 @@ These fields cannot be changed via the API:
 
 ---
 
+## Public Provider Profile Fields
+
+When a patient or unauthenticated user fetches a provider via `GET /api/provider/public/{id}/`, the response now includes:
+
+### Contact Information
+
+| Field | Location | Description |
+|-------|----------|-------------|
+| `phone_number` | top-level | Contact phone number |
+| `email` | top-level | Contact email (clinics may expose their own clinic email) |
+
+#### Doctor sub-object additional fields
+
+| Field | Description |
+|-------|-------------|
+| `phone_number` | Doctor's direct phone number |
+| `email` | Doctor's account email |
+| `consultation_price` | Standard clinic consultation price (DZD) |
+| `home_visit_price` | Home visit price (DZD) |
+| `online_consultation_price` | Online/video consultation price (DZD) |
+| `currency` | Currency code (default: `DZD`) |
+| `biography` | Professional biography |
+| `specialties` | List of specialties with `title`, `title_ar`, `title_fr`, `slug`, `is_primary` |
+
+#### Clinic sub-object additional fields
+
+| Field | Description |
+|-------|-------------|
+| `phone_number` | Clinic contact phone |
+| `email` | Clinic-specific email address |
+
+#### Nurse sub-object additional fields
+
+| Field | Description |
+|-------|-------------|
+| `phone_number` | Nurse contact phone |
+| `email` | Nurse account email |
+
+### Social Media Links
+
+All public provider endpoints (`/api/provider/public/` list and `/api/provider/public/{id}/` detail) now return a `social_links` array:
+
+```json
+"social_links": [
+    {
+        "id": 1,
+        "platform": "FACEBOOK",
+        "url": "https://facebook.com/dr.kaddour",
+        "display_order": 1,
+        "is_visible": true
+    },
+    {
+        "id": 2,
+        "platform": "INSTAGRAM",
+        "url": "https://instagram.com/dr.kaddour",
+        "display_order": 2,
+        "is_visible": true
+    }
+]
+```
+
+Only links with `is_visible: true` are returned.
+
+### Addresses (with Coordinates)
+
+All addresses returned in both the list (`primary_address`) and detail (`addresses` array) include full coordinate data for map display:
+
+```json
+"addresses": [
+    {
+        "id": 5,
+        "street": "12 Rue Hassiba Ben Bouali",
+        "city": "Algiers",
+        "state": "Algiers",
+        "zip_code": "16000",
+        "country": "Algeria",
+        "latitude": 36.7538,
+        "longitude": 3.0588,
+        "is_primary": true,
+        "address_type": "CLINIC",
+        "notes": "2nd floor, Cabinet 14"
+    }
+]
+```
+
+Use `latitude` and `longitude` to place a map pin on the provider profile page. The `primary_address` field in the list response gives the same structure for the most important address.
+
+### Full Public Detail Response Example (Doctor)
+
+```json
+{
+    "id": 10,
+    "provider_type": "DOCTOR",
+    "provider_type_display": "Doctor",
+    "name": "Dr. Mohamed Kaddour",
+    "phone_number": "+213555123456",
+    "email": "doctor@example.com",
+    "doctor": {
+        "id": 1,
+        "first_name": "Mohamed",
+        "last_name": "Kaddour",
+        "full_name": "Dr. Mohamed Kaddour",
+        "email": "doctor@example.com",
+        "phone_number": "+213555123456",
+        "gender": "MALE",
+        "profile_image": "https://dzmedilink.duckdns.org/media/doctors/profiles/photo.jpg",
+        "years_of_experience": 15,
+        "biography": "Board-certified cardiologist with 15 years of experience...",
+        "consultation_price": "3000.00",
+        "home_visit_price": "5000.00",
+        "online_consultation_price": "2000.00",
+        "currency": "DZD",
+        "is_available": true,
+        "is_home_service_available": false,
+        "specialties": [
+            {
+                "id": 1,
+                "title": "Cardiology",
+                "title_ar": "أمراض القلب",
+                "title_fr": "Cardiologie",
+                "slug": "cardiology",
+                "is_primary": true
+            }
+        ],
+        "services": [
+            {
+                "id": 1,
+                "title": "General Consultation",
+                "price": "3000.00",
+                "duration_minutes": 30,
+                "is_home_service": false
+            }
+        ]
+    },
+    "addresses": [
+        {
+            "id": 5,
+            "street": "12 Rue Hassiba Ben Bouali",
+            "city": "Algiers",
+            "state": "Algiers",
+            "zip_code": "16000",
+            "country": "Algeria",
+            "latitude": 36.7538,
+            "longitude": 3.0588,
+            "is_primary": true,
+            "address_type": "CLINIC"
+        }
+    ],
+    "rating": {
+        "average": 4.7,
+        "count": 38,
+        "distribution": { "1": 0, "2": 1, "3": 2, "4": 10, "5": 25 }
+    },
+    "social_links": [
+        { "platform": "FACEBOOK", "url": "https://facebook.com/dr.kaddour", "is_visible": true },
+        { "platform": "INSTAGRAM", "url": "https://instagram.com/dr.kaddour", "is_visible": true }
+    ]
+}
+```
+
+---
+
 ## Managing Addresses
 
 ### List Addresses
