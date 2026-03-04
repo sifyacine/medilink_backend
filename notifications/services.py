@@ -381,11 +381,13 @@ class NotificationService:
                 body=body,
                 notification_type=notif_type,
                 data=data or {},
-                is_read=False
+                is_read=False,
+                push_sent=False,
+                action_url=data.get('action_url', '') if data else '',
             )
-            logger.debug(f"💾 Saved notification to history for user {user.id}")
+            logger.info(f"💾 Saved notification '{title}' for user {user.id}")
         except Exception as e:
-            logger.error(f"❌ Error saving notification to history: {e}")
+            logger.error(f"❌ Error saving notification to history: {e}", exc_info=True)
 
     @staticmethod
     def _prepare_data(data: dict) -> dict:
