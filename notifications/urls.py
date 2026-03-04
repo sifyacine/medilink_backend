@@ -50,7 +50,7 @@ urlpatterns = [
     
     # Mark as read
     # PATCH /api/notifications/<id>/read/
-    path('notifications/<int:notification_id>/read/', views.mark_notification_read_api, name='mark_notification_read'),
+    path('notifications/<uuid:notification_id>/read/', views.mark_notification_read_api, name='mark_notification_read'),
 
     # Mark all read
     # POST /api/notifications/mark-all-read/
@@ -58,7 +58,7 @@ urlpatterns = [
 
     # Delete single notification
     # DELETE /api/notifications/<id>/
-    path('notifications/<int:notification_id>/', views.delete_notification_api, name='delete_notification'),
+    path('notifications/<uuid:notification_id>/', views.delete_notification_api, name='delete_notification'),
     
     # Clear all notifications
     # DELETE /api/notifications/clear-all/

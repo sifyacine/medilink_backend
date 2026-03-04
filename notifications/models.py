@@ -105,18 +105,11 @@ class DeviceToken(models.Model):
 class Notification(models.Model):
     """
     Stores persistent notification history for users.
-
-    Schema notes (DO NOT add a migration without checking the real DB first):
-    - id          : bigint sequence (NOT UUIDField)
-    - body        : maps to DB column 'message' via db_column
-    - action_url  : NOT NULL in DB, defaults to ''
-    - updated_at  : NOT NULL in DB, set automatically via auto_now
-    - category    : column does NOT exist in DB — field intentionally omitted
     """
-    # id is BigAutoField (bigint sequence) — Django adds it automatically
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
     title = models.CharField(max_length=255)
-    body = models.TextField(db_column='message')  # DB column is named 'message'
+    body = models.TextField()
     notification_type = models.CharField(
         max_length=50,
         choices=NotificationType.choices,
@@ -127,14 +120,14 @@ class Notification(models.Model):
         choices=NotificationPriority.choices,
         default=NotificationPriority.NORMAL
     )
-    # category field intentionally removed — column does not exist in the database
-    related_object_id = models.CharField(max_length=255, blank=True, null=True)
-    action_url = models.CharField(max_length=500, blank=True, default='')  # NOT NULL in DB
-    read_at = models.DateTimeField(null=True, blank=True)
+    category = models.CharField(
+        max_length=50,
+        choices=NotificationCategory.choices,
+        default=NotificationCategory.GENERAL
+    )
     data = models.JSONField(default=dict, blank=True)
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)  # NOT NULL in DB
     
     class Meta:
         db_table = 'notifications'
