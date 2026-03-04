@@ -25,7 +25,6 @@ django_asgi_app = get_asgi_application()
 
 # Import Channels components after Django is initialized
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.security.websocket import AllowedHostsOriginValidator
 
 # Import WebSocket routing from each app
 from nurse_requests.routing import websocket_urlpatterns as nurse_request_patterns
@@ -42,12 +41,9 @@ all_websocket_patterns = (
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    "websocket": AllowedHostsOriginValidator(
-        # Token auth via ?token=<key> with session auth fallback
-        WebSocketAuthMiddlewareStack(
-            URLRouter(
-                all_websocket_patterns
-            )
+    "websocket": WebSocketAuthMiddlewareStack(
+        URLRouter(
+            all_websocket_patterns
         )
     ),
 })
