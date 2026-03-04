@@ -118,6 +118,15 @@ class NotificationService:
         Returns:
             bool: True if at least one message was sent successfully
         """
+        # Save to database for history for each user regardless of FCM result
+        for user in users:
+            NotificationService._save_notification(
+                user=user,
+                title=title,
+                body=body,
+                data=data
+            )
+
         # Get all tokens for the given users
         tokens = list(DeviceToken.objects.filter(
             user__in=users,
@@ -128,25 +137,13 @@ class NotificationService:
             logger.debug(f"No active tokens found for users")
             return False
         
-        sent_success = NotificationService._send_to_tokens(
+        return NotificationService._send_to_tokens(
             tokens=tokens,
             title=title,
             body=body,
             image_url=image_url,
             data=data
         )
-
-        # Save to database for history for each user
-        if sent_success:
-            for user in users:
-                NotificationService._save_notification(
-                    user=user,
-                    title=title,
-                    body=body,
-                    data=data
-                )
-        
-        return sent_success
     
     @staticmethod
     def send_to_topic(topic: str, title: str, body: str, image_url: str = None, data: dict = None) -> bool:
