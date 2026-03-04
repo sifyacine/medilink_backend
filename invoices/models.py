@@ -478,7 +478,7 @@ class Invoice(models.Model):
         elif self.amount_paid > Decimal('0.00'):
             self.status = InvoiceStatus.PARTIALLY_PAID
             self.paid_at = None
-        self.save(update_fields=['status', 'paid_at', 'updated_at'])
+        self.save(update_fields=['amount_paid', 'status', 'paid_at', 'updated_at'])
 
 
 class InvoiceItem(models.Model):
