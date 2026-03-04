@@ -396,22 +396,11 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
             'items',
         ]
         extra_kwargs = {
-            'provider': {'required': False},
+            'provider': {'required': True},
         }
     
     def validate(self, data):
         """Validate invoice creation data."""
-        request = self.context['request']
-
-        # Auto-set provider from authenticated user when not explicitly given
-        if not data.get('provider'):
-            if hasattr(request.user, 'provider_profile'):
-                data['provider'] = request.user.provider_profile
-            else:
-                raise serializers.ValidationError({
-                    'provider': 'This field is required for non-provider users.'
-                })
-
         patient_user = data.get('patient_user')
         patient_record = data.get('patient_record')
         

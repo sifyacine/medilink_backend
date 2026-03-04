@@ -24,6 +24,7 @@ Integration Points:
 - Direct Sales: Invoice for products sold by sellers
 """
 import uuid
+import datetime
 import secrets
 from decimal import Decimal
 from django.db import models
@@ -191,7 +192,7 @@ class Invoice(models.Model):
     
     # Dates
     issue_date = models.DateField(
-        default=timezone.now,
+        default=datetime.date.today,
         help_text='Date the invoice was issued'
     )
     due_date = models.DateField(
