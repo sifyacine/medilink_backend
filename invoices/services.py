@@ -535,18 +535,6 @@ class InvoiceNotifier:
                         'due_date': invoice.due_date.isoformat() if invoice.due_date else None,
                     },
                 )
-
-            # Notify provider (confirmation)
-            NotificationService.create_notification(
-                user=invoice.provider.user,
-                title='Invoice Sent',
-                body=f'Invoice #{invoice.invoice_number} for {invoice.total} {invoice.currency} has been sent to {InvoiceNotifier._get_patient_name(invoice)}.',
-                notification_type='INVOICE_CREATED',
-                data={
-                    'invoice_id': str(invoice.id),
-                    'invoice_number': invoice.invoice_number,
-                },
-            )
         except ImportError:
             pass
         except Exception:
@@ -588,21 +576,6 @@ class InvoiceNotifier:
                         'status': invoice.status,
                     },
                 )
-
-            # Notify provider about the payment
-            patient_name = InvoiceNotifier._get_patient_name(invoice)
-            NotificationService.create_notification(
-                user=invoice.provider.user,
-                title='Payment Received',
-                body=f'{patient_name} paid {payment.amount} {invoice.currency} for invoice #{invoice.invoice_number}.',
-                notification_type='PAYMENT_RECEIVED',
-                data={
-                    'invoice_id': str(invoice.id),
-                    'payment_id': str(payment.id),
-                    'amount': str(payment.amount),
-                    'status': invoice.status,
-                },
-            )
         except ImportError:
             pass
         except Exception:
@@ -635,20 +608,6 @@ class InvoiceNotifier:
                         'due_date': invoice.due_date.isoformat(),
                     },
                 )
-
-            # Notify provider
-            patient_name = InvoiceNotifier._get_patient_name(invoice)
-            NotificationService.create_notification(
-                user=invoice.provider.user,
-                title='Invoice Overdue',
-                body=f'Invoice #{invoice.invoice_number} for {patient_name} ({invoice.amount_due} {invoice.currency}) is now overdue.',
-                notification_type='INVOICE_OVERDUE',
-                data={
-                    'invoice_id': str(invoice.id),
-                    'invoice_number': invoice.invoice_number,
-                    'amount_due': str(invoice.amount_due),
-                },
-            )
         except ImportError:
             pass
         except Exception:

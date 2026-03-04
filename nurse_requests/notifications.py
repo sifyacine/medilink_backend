@@ -212,26 +212,6 @@ class NurseRequestNotifier:
         }
         cls._ws_to_nurse(accepted_offer.nurse, 'nurse_request_accepted', ws_nurse)
 
-        # --- Patient confirmation ---
-        patient_user = request_obj.get_patient_user()
-        if patient_user:
-            nurse_name = _get_display_name(nurse_user)
-            NotificationService.create_for_object(
-                recipient=patient_user,
-                title='✅ Nurse Accepted',
-                message=f'You accepted {nurse_name}\'s offer. They are on the way!',
-                related_object=request_obj,
-                notification_type=NotificationType.NURSE_REQUEST_ACCEPTED,
-                priority=NotificationPriority.HIGH,
-                action_url=f'/nurse-requests/{request_obj.pk}',
-                data={'request_id': str(request_obj.pk)},
-            )
-            ws_patient = {
-                'request': request_data,
-                'message': f'{nurse_name} is on the way!',
-            }
-            cls._ws_to_patient(request_obj, 'nurse_request_accepted', ws_patient)
-
         cls._ws_to_request_group(request_obj, 'nurse_request_accepted', {
             'request': request_data,
             'message': 'Offer accepted',
@@ -273,19 +253,15 @@ class NurseRequestNotifier:
     @classmethod
     def notify_service_completed(cls, request_obj):
         """
-        Notify both patient and nurse when service is completed.
+        Notify the patient when service is completed (by nurse → no self-notification for nurse).
         """
         request_data = cls._serialize_request(request_obj)
         nurse_name = ''
-        nurse_user = None
         if request_obj.accepted_nurse:
-            nurse_user = request_obj.accepted_nurse.user
-            nurse_name = _get_display_name(nurse_user)
+            nurse_name = _get_display_name(request_obj.accepted_nurse.user)
 
+        # Notify patient only (nurse completed → no self-notification)
         patient_user = request_obj.get_patient_user()
-        patient_name = request_obj.get_patient_display_name()
-
-        # --- Patient ---
         if patient_user:
             NotificationService.create_for_object(
                 recipient=patient_user,
@@ -305,24 +281,6 @@ class NurseRequestNotifier:
                 'message': f'Service completed by {nurse_name}',
             }
             cls._ws_to_patient(request_obj, 'nurse_request_completed', ws_patient)
-
-        # --- Nurse ---
-        if nurse_user:
-            NotificationService.create_for_object(
-                recipient=nurse_user,
-                title='✔️ Service Completed',
-                message=f'You completed {request_obj.service.title} for {patient_name}.',
-                related_object=request_obj,
-                notification_type=NotificationType.NURSE_REQUEST_COMPLETED,
-                priority=NotificationPriority.NORMAL,
-                action_url=f'/nurse-requests/{request_obj.pk}',
-                data={'request_id': str(request_obj.pk)},
-            )
-            ws_nurse = {
-                'request': request_data,
-                'message': f'Service completed for {patient_name}',
-            }
-            cls._ws_to_nurse(request_obj.accepted_nurse, 'nurse_request_completed', ws_nurse)
 
         cls._ws_to_request_group(request_obj, 'nurse_request_completed', {
             'request': request_data,

@@ -33,7 +33,7 @@ def get_patient_display_name(patient_user=None, patient_record=None) -> str:
         full_name = patient_user.get_full_name() if hasattr(patient_user, 'get_full_name') else None
         if full_name and full_name.strip():
             return full_name.strip()
-        return patient_user.email if hasattr(patient_user, 'email') else str(patient_user)
+        return 'A patient'
     
     if patient_record:
         first = getattr(patient_record, 'first_name', '') or ''

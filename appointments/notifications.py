@@ -75,9 +75,9 @@ class AppointmentNotifier:
         """
         Send notifications when a new appointment is created.
         
-        Args:
-            appointment: The Appointment instance
-            created_by: User who created the appointment (to avoid notifying themselves)
+        Only the OTHER party (not the creator) receives the notification.
+        - Patient creates → provider gets notified
+        - Provider creates → patient gets notified
         """
         from common.utils import get_patient_display_name
 
@@ -95,36 +95,38 @@ class AppointmentNotifier:
 
         appointment_data = cls._serialize_appointment_for_websocket(appointment)
 
-        # Create in-app notification + FCM push
-        NotificationService.create_for_object(
-            recipient=provider_user,
-            title='🗓️ New Appointment Request',
-            message=f'{patient_name} has requested an appointment on {date_str} at {time_str}.',
-            related_object=appointment,
-            notification_type=NotificationType.APPOINTMENT_CREATED,
-            priority=NotificationPriority.HIGH,
-            action_url=f'/appointments/{appointment.pk}',
-            data={'appointment_id': str(appointment.pk)},
-        )
+        provider_created = created_by and created_by == provider_user
 
-        # Also broadcast via appointment WebSocket for instant dashboard update
-        ws_data = {
-            'appointment': appointment_data,
-            'message': f'New appointment request from {patient_name}',
-        }
-        WebSocketBroadcaster.send_to_provider(
-            provider_id=appointment.provider.id,
-            message_type='new_appointment',
-            data=ws_data,
-        )
-        cls._broadcast_to_appointment_group(appointment, 'new_appointment', ws_data)
+        if provider_created:
+            # Provider created the appointment → notify PATIENT only
+            if patient_user:
+                NotificationService.create_for_object(
+                    recipient=patient_user,
+                    title='🗓️ Appointment Scheduled',
+                    message=f'{provider_name} has scheduled an appointment for you on {date_str} at {time_str}.',
+                    related_object=appointment,
+                    notification_type=NotificationType.APPOINTMENT_CREATED,
+                    priority=NotificationPriority.HIGH,
+                    action_url=f'/appointments/{appointment.pk}',
+                    data={'appointment_id': str(appointment.pk)},
+                )
 
-        # Notify patient if provider created the appointment
-        if patient_user and created_by and created_by == provider_user:
+                ws_data_patient = {
+                    'appointment': appointment_data,
+                    'message': f'{provider_name} scheduled an appointment for you',
+                }
+                WebSocketBroadcaster.send_to_patient(
+                    user_id=patient_user.id,
+                    message_type='new_appointment',
+                    data=ws_data_patient,
+                )
+                cls._broadcast_to_appointment_group(appointment, 'new_appointment', ws_data_patient)
+        else:
+            # Patient (or unknown) created → notify PROVIDER only
             NotificationService.create_for_object(
-                recipient=patient_user,
-                title='🗓️ Appointment Scheduled',
-                message=f'An appointment has been scheduled with {provider_name} on {date_str} at {time_str}.',
+                recipient=provider_user,
+                title='🗓️ New Appointment Request',
+                message=f'{patient_name} has requested an appointment on {date_str} at {time_str}.',
                 related_object=appointment,
                 notification_type=NotificationType.APPOINTMENT_CREATED,
                 priority=NotificationPriority.HIGH,
@@ -132,36 +134,29 @@ class AppointmentNotifier:
                 data={'appointment_id': str(appointment.pk)},
             )
 
-            # WebSocket for patient
-            ws_data_patient = {
+            ws_data = {
                 'appointment': appointment_data,
-                'message': f'Appointment scheduled with {provider_name}',
+                'message': f'New appointment request from {patient_name}',
             }
-            WebSocketBroadcaster.send_to_patient(
-                user_id=patient_user.id,
+            WebSocketBroadcaster.send_to_provider(
+                provider_id=appointment.provider.id,
                 message_type='new_appointment',
-                data=ws_data_patient,
+                data=ws_data,
             )
-            cls._broadcast_to_appointment_group(appointment, 'new_appointment', ws_data_patient)
+            cls._broadcast_to_appointment_group(appointment, 'new_appointment', ws_data)
     
     @classmethod
     def notify_appointment_confirmed(cls, appointment):
-        """Send notification when appointment is confirmed."""
-        from common.utils import get_patient_display_name
-        
+        """Send notification when appointment is confirmed (by provider → notify patient only)."""
         patient_user = appointment.patient_user
         if not patient_user:
             return
         
         provider_name = _get_provider_display_name(appointment.provider.user)
-        patient_name = get_patient_display_name(
-            patient_user=appointment.patient_user,
-            patient_record=appointment.patient_record
-        )
         date_str = appointment.scheduled_date.strftime('%B %d, %Y') if appointment.scheduled_date else "TBD"
         time_str = appointment.scheduled_time.strftime('%I:%M %p') if appointment.scheduled_time else "TBD"
         
-        # Create notification for patient
+        # Notify patient only (provider confirmed → no self-notification)
         NotificationService.create_for_object(
             recipient=patient_user,
             title='✅ Appointment Confirmed',
@@ -172,7 +167,6 @@ class AppointmentNotifier:
             action_url=f'/appointments/{appointment.pk}',
         )
         
-        # WebSocket update
         appointment_data = cls._serialize_appointment_for_websocket(appointment)
         ws_data = {
             'appointment': appointment_data,
@@ -182,24 +176,6 @@ class AppointmentNotifier:
             user_id=patient_user.id,
             message_type='appointment_confirmed',
             data=ws_data,
-        )
-        # Notify provider that they confirmed (for other open tabs/devices)
-        NotificationService.create_for_object(
-            recipient=appointment.provider.user,
-            title='✅ Appointment Confirmed',
-            message=f'You confirmed the appointment with {patient_name} on {date_str} at {time_str}.',
-            related_object=appointment,
-            notification_type=NotificationType.APPOINTMENT_CONFIRMED,
-            priority=NotificationPriority.NORMAL,
-            action_url=f'/appointments/{appointment.pk}',
-        )
-        WebSocketBroadcaster.send_to_provider(
-            provider_id=appointment.provider.id,
-            message_type='appointment_confirmed',
-            data={
-                'appointment': appointment_data,
-                'message': f'Appointment with {patient_name} confirmed',
-            },
         )
         cls._broadcast_to_appointment_group(appointment, 'appointment_confirmed', ws_data)
     
@@ -327,7 +303,7 @@ class AppointmentNotifier:
     
     @classmethod
     def notify_appointment_rescheduled(cls, appointment, rescheduled_by=None):
-        """Send notifications when appointment is rescheduled."""
+        """Send notification to the OTHER party when appointment is rescheduled."""
         from common.utils import get_patient_display_name
         
         provider_user = appointment.provider.user
@@ -335,8 +311,6 @@ class AppointmentNotifier:
         provider_name = _get_provider_display_name(provider_user)
         date_str = appointment.scheduled_date.strftime('%B %d, %Y') if appointment.scheduled_date else "TBD"
         time_str = appointment.scheduled_time.strftime('%I:%M %p') if appointment.scheduled_time else "TBD"
-        
-        # Determine names
         patient_name = get_patient_display_name(
             patient_user=appointment.patient_user, 
             patient_record=appointment.patient_record
@@ -344,42 +318,42 @@ class AppointmentNotifier:
         
         appointment_data = cls._serialize_appointment_for_websocket(appointment)
         
-        # Notify provider
-        NotificationService.create_for_object(
-            recipient=provider_user,
-            title='📅 Appointment Rescheduled',
-            message=f'Appointment with {patient_name} rescheduled to {date_str} at {time_str}.',
-            related_object=appointment,
-            notification_type=NotificationType.APPOINTMENT_UPDATED,
-            priority=NotificationPriority.HIGH,
-            action_url=f'/appointments/{appointment.pk}',
-        )
+        # If provider rescheduled → notify patient only
+        # If patient rescheduled → notify provider only
+        # If unknown → notify both
+        notify_provider = rescheduled_by != provider_user
+        notify_patient = patient_user and rescheduled_by != patient_user
         
-        ws_reschedule_data = {
-            'appointment': appointment_data,
-            'old_status': 'PENDING',
-            'new_status': 'RESCHEDULED',
-            'message': f'Appointment rescheduled to {date_str} at {time_str}',
-        }
-        WebSocketBroadcaster.send_to_provider(
-            provider_id=appointment.provider.id,
-            message_type='appointment_rescheduled',
-            data=ws_reschedule_data,
-        )
-        cls._broadcast_to_appointment_group(appointment, 'appointment_rescheduled', ws_reschedule_data)
-        
-        # Notify patient
-        if patient_user:
+        if notify_provider:
             NotificationService.create_for_object(
-                recipient=patient_user,
+                recipient=provider_user,
                 title='📅 Appointment Rescheduled',
-                message=f'Your appointment with {provider_name} has been rescheduled to {date_str} at {time_str}.',
+                message=f'{patient_name} rescheduled their appointment to {date_str} at {time_str}.',
                 related_object=appointment,
                 notification_type=NotificationType.APPOINTMENT_UPDATED,
                 priority=NotificationPriority.HIGH,
                 action_url=f'/appointments/{appointment.pk}',
             )
-            
+            ws_reschedule_data = {
+                'appointment': appointment_data,
+                'message': f'Appointment rescheduled to {date_str} at {time_str}',
+            }
+            WebSocketBroadcaster.send_to_provider(
+                provider_id=appointment.provider.id,
+                message_type='appointment_rescheduled',
+                data=ws_reschedule_data,
+            )
+        
+        if notify_patient:
+            NotificationService.create_for_object(
+                recipient=patient_user,
+                title='📅 Appointment Rescheduled',
+                message=f'{provider_name} rescheduled your appointment to {date_str} at {time_str}.',
+                related_object=appointment,
+                notification_type=NotificationType.APPOINTMENT_UPDATED,
+                priority=NotificationPriority.HIGH,
+                action_url=f'/appointments/{appointment.pk}',
+            )
             ws_resched_patient = {
                 'appointment': appointment_data,
                 'message': f'Appointment rescheduled to {date_str} at {time_str}',
@@ -389,7 +363,11 @@ class AppointmentNotifier:
                 message_type='appointment_rescheduled',
                 data=ws_resched_patient,
             )
-            cls._broadcast_to_appointment_group(appointment, 'appointment_rescheduled', ws_resched_patient)
+        
+        cls._broadcast_to_appointment_group(appointment, 'appointment_rescheduled', {
+            'appointment': appointment_data,
+            'message': f'Appointment rescheduled to {date_str} at {time_str}',
+        })
     
     @classmethod
     def notify_appointment_reminder(cls, appointment, minutes_before: int = 30):
@@ -428,60 +406,35 @@ class AppointmentNotifier:
     
     @classmethod
     def notify_appointment_completed(cls, appointment):
-        """Send notification when appointment is marked as completed."""
-        from common.utils import get_patient_display_name
-
+        """Send notification when appointment is completed (by provider → notify patient only)."""
         patient_user = appointment.patient_user
-        provider_user = appointment.provider.user
-        provider_name = _get_provider_display_name(provider_user)
-        patient_name = get_patient_display_name(
-            patient_user=appointment.patient_user,
-            patient_record=appointment.patient_record
-        )
+        if not patient_user:
+            return
+
+        provider_name = _get_provider_display_name(appointment.provider.user)
         date_str = appointment.scheduled_date.strftime('%B %d, %Y') if appointment.scheduled_date else "TBD"
         appointment_data = cls._serialize_appointment_for_websocket(appointment)
 
-        # Notify patient via FCM + WebSocket
-        if patient_user:
-            NotificationService.create_for_object(
-                recipient=patient_user,
-                title='✔️ Appointment Completed',
-                message=f'Your appointment with {provider_name} on {date_str} has been completed. Thank you for visiting!',
-                related_object=appointment,
-                notification_type=NotificationType.APPOINTMENT_COMPLETED,
-                priority=NotificationPriority.NORMAL,
-                action_url=f'/appointments/{appointment.pk}',
-            )
-
-            ws_data = {
-                'appointment': appointment_data,
-                'message': f'Appointment with {provider_name} completed',
-            }
-            WebSocketBroadcaster.send_to_patient(
-                user_id=patient_user.id,
-                message_type='appointment_completed',
-                data=ws_data,
-            )
-
-        # Notify provider
+        # Notify patient only (provider completed → no self-notification)
         NotificationService.create_for_object(
-            recipient=provider_user,
+            recipient=patient_user,
             title='✔️ Appointment Completed',
-            message=f'Your appointment with {patient_name} on {date_str} has been completed.',
+            message=f'Your appointment with {provider_name} on {date_str} has been completed. Thank you for visiting!',
             related_object=appointment,
             notification_type=NotificationType.APPOINTMENT_COMPLETED,
             priority=NotificationPriority.NORMAL,
             action_url=f'/appointments/{appointment.pk}',
         )
-        WebSocketBroadcaster.send_to_provider(
-            provider_id=appointment.provider.id,
+
+        ws_data = {
+            'appointment': appointment_data,
+            'message': f'Appointment with {provider_name} completed',
+        }
+        WebSocketBroadcaster.send_to_patient(
+            user_id=patient_user.id,
             message_type='appointment_completed',
-            data={
-                'appointment': appointment_data,
-                'message': f'Appointment with {patient_name} completed',
-            },
+            data=ws_data,
         )
-        # Broadcast to appointment group
         cls._broadcast_to_appointment_group(appointment, 'appointment_completed', {
             'appointment': appointment_data,
             'message': 'Appointment completed',
