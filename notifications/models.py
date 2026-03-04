@@ -109,7 +109,7 @@ class Notification(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
     title = models.CharField(max_length=255)
-    body = models.TextField()
+    body = models.TextField(db_column='message')  # DB column is 'message' from original schema
     notification_type = models.CharField(
         max_length=50,
         choices=NotificationType.choices,
