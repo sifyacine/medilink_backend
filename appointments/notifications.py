@@ -368,6 +368,7 @@ class AppointmentNotifier:
                 message_type='appointment_rescheduled',
                 data=ws_resched_patient,
             )
+            cls._broadcast_to_appointment_group(appointment, 'appointment_rescheduled', ws_resched_patient)
     
     @classmethod
     def notify_appointment_reminder(cls, appointment, minutes_before: int = 30):
