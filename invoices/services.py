@@ -486,6 +486,23 @@ class InvoiceNotifier:
     Integrates with the notification system to send
     push notifications and WebSocket updates.
     """
+
+    @staticmethod
+    def _get_provider_name(invoice) -> str:
+        """Get provider display name from invoice, never falling back to email."""
+        name = invoice.provider.user.get_full_name()
+        if name and name.strip():
+            return name.strip()
+        return 'Your healthcare provider'
+
+    @staticmethod
+    def _get_patient_name(invoice) -> str:
+        """Get patient display name from invoice."""
+        from common.utils import get_patient_display_name
+        return get_patient_display_name(
+            patient_user=invoice.patient_user,
+            patient_record=invoice.patient_record,
+        )
     
     @staticmethod
     def notify_invoice_sent(invoice: Invoice):
@@ -502,33 +519,43 @@ class InvoiceNotifier:
             if not patient_user and invoice.patient_record:
                 patient_user = invoice.patient_record.linked_user
             
-            if not patient_user:
-                return
+            provider_name = InvoiceNotifier._get_provider_name(invoice)
             
+            if patient_user:
+                NotificationService.create_notification(
+                    user=patient_user,
+                    title='New Invoice',
+                    body=f'{provider_name} sent you invoice #{invoice.invoice_number} for {invoice.total} {invoice.currency}.',
+                    notification_type='INVOICE_CREATED',
+                    data={
+                        'invoice_id': str(invoice.id),
+                        'invoice_number': invoice.invoice_number,
+                        'total': str(invoice.total),
+                        'currency': invoice.currency,
+                        'due_date': invoice.due_date.isoformat() if invoice.due_date else None,
+                    },
+                )
+
+            # Notify provider (confirmation)
             NotificationService.create_notification(
-                user=patient_user,
-                title='New Invoice',
-                body=f'You have a new invoice #{invoice.invoice_number} for {invoice.total} {invoice.currency}',
-                notification_type='INVOICE',
+                user=invoice.provider.user,
+                title='Invoice Sent',
+                body=f'Invoice #{invoice.invoice_number} for {invoice.total} {invoice.currency} has been sent to {InvoiceNotifier._get_patient_name(invoice)}.',
+                notification_type='INVOICE_CREATED',
                 data={
                     'invoice_id': str(invoice.id),
                     'invoice_number': invoice.invoice_number,
-                    'total': str(invoice.total),
-                    'currency': invoice.currency,
-                    'due_date': invoice.due_date.isoformat() if invoice.due_date else None,
                 },
             )
         except ImportError:
-            # Notification system not available
             pass
         except Exception:
-            # Don't fail invoice sending due to notification errors
             pass
     
     @staticmethod
     def notify_payment_received(invoice: Invoice, payment: Payment):
         """
-        Notify patient that a payment has been recorded.
+        Notify patient and provider that a payment has been recorded.
         
         Args:
             invoice: Invoice that was paid
@@ -541,21 +568,34 @@ class InvoiceNotifier:
             if not patient_user and invoice.patient_record:
                 patient_user = invoice.patient_record.linked_user
             
-            if not patient_user:
-                return
-            
             if invoice.status == InvoiceStatus.PAID:
-                title = 'Invoice Paid'
-                body = f'Your invoice #{invoice.invoice_number} has been paid in full.'
+                patient_title = 'Invoice Paid'
+                patient_body = f'Your invoice #{invoice.invoice_number} has been paid in full.'
             else:
-                title = 'Payment Received'
-                body = f'Payment of {payment.amount} {invoice.currency} received for invoice #{invoice.invoice_number}. Remaining: {invoice.amount_due} {invoice.currency}'
+                patient_title = 'Payment Received'
+                patient_body = f'Payment of {payment.amount} {invoice.currency} received for invoice #{invoice.invoice_number}. Remaining: {invoice.amount_due} {invoice.currency}'
             
+            if patient_user:
+                NotificationService.create_notification(
+                    user=patient_user,
+                    title=patient_title,
+                    body=patient_body,
+                    notification_type='PAYMENT_RECEIVED',
+                    data={
+                        'invoice_id': str(invoice.id),
+                        'payment_id': str(payment.id),
+                        'amount': str(payment.amount),
+                        'status': invoice.status,
+                    },
+                )
+
+            # Notify provider about the payment
+            patient_name = InvoiceNotifier._get_patient_name(invoice)
             NotificationService.create_notification(
-                user=patient_user,
-                title=title,
-                body=body,
-                notification_type='PAYMENT',
+                user=invoice.provider.user,
+                title='Payment Received',
+                body=f'{patient_name} paid {payment.amount} {invoice.currency} for invoice #{invoice.invoice_number}.',
+                notification_type='PAYMENT_RECEIVED',
                 data={
                     'invoice_id': str(invoice.id),
                     'payment_id': str(payment.id),
@@ -571,10 +611,7 @@ class InvoiceNotifier:
     @staticmethod
     def notify_overdue(invoice: Invoice):
         """
-        Notify patient that an invoice is overdue.
-        
-        Args:
-            invoice: Invoice that is overdue
+        Notify patient and provider that an invoice is overdue.
         """
         try:
             from notifications.services import NotificationService
@@ -583,20 +620,33 @@ class InvoiceNotifier:
             if not patient_user and invoice.patient_record:
                 patient_user = invoice.patient_record.linked_user
             
-            if not patient_user:
-                return
+            provider_name = InvoiceNotifier._get_provider_name(invoice)
             
+            if patient_user:
+                NotificationService.create_notification(
+                    user=patient_user,
+                    title='Invoice Overdue',
+                    body=f'Your invoice #{invoice.invoice_number} from {provider_name} for {invoice.amount_due} {invoice.currency} is now overdue.',
+                    notification_type='INVOICE_OVERDUE',
+                    data={
+                        'invoice_id': str(invoice.id),
+                        'invoice_number': invoice.invoice_number,
+                        'amount_due': str(invoice.amount_due),
+                        'due_date': invoice.due_date.isoformat(),
+                    },
+                )
+
+            # Notify provider
+            patient_name = InvoiceNotifier._get_patient_name(invoice)
             NotificationService.create_notification(
-                user=patient_user,
+                user=invoice.provider.user,
                 title='Invoice Overdue',
-                body=f'Invoice #{invoice.invoice_number} for {invoice.amount_due} {invoice.currency} is now overdue.',
+                body=f'Invoice #{invoice.invoice_number} for {patient_name} ({invoice.amount_due} {invoice.currency}) is now overdue.',
                 notification_type='INVOICE_OVERDUE',
-                priority='HIGH',
                 data={
                     'invoice_id': str(invoice.id),
                     'invoice_number': invoice.invoice_number,
                     'amount_due': str(invoice.amount_due),
-                    'due_date': invoice.due_date.isoformat(),
                 },
             )
         except ImportError:

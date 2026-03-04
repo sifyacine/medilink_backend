@@ -151,7 +151,9 @@ def _send_prescription_notification(prescription):
             return
         
         # Build notification message
-        doctor_name = prescription.doctor.user.get_full_name() if prescription.doctor else "Your doctor"
+        doctor_name = prescription.doctor.user.get_full_name() if prescription.doctor else None
+        if not doctor_name or not doctor_name.strip():
+            doctor_name = "Your doctor"
         
         NotificationService.create_notification(
             recipient=recipient,

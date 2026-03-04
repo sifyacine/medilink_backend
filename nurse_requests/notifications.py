@@ -20,6 +20,14 @@ from notifications.models import NotificationType, NotificationPriority
 logger = logging.getLogger(__name__)
 
 
+def _get_display_name(user) -> str:
+    """Get user display name, never falling back to email."""
+    name = user.get_full_name()
+    if name and name.strip():
+        return name.strip()
+    return 'Your healthcare provider'
+
+
 class NurseRequestNotifier:
     """
     Handles all on-demand nursing request notifications.
@@ -207,7 +215,7 @@ class NurseRequestNotifier:
         # --- Patient confirmation ---
         patient_user = request_obj.get_patient_user()
         if patient_user:
-            nurse_name = nurse_user.get_full_name() or nurse_user.email
+            nurse_name = _get_display_name(nurse_user)
             NotificationService.create_for_object(
                 recipient=patient_user,
                 title='✅ Nurse Accepted',
@@ -241,7 +249,7 @@ class NurseRequestNotifier:
         request_data = cls._serialize_request(request_obj)
         nurse_name = ''
         if request_obj.accepted_nurse:
-            nurse_name = request_obj.accepted_nurse.user.get_full_name() or request_obj.accepted_nurse.user.email
+            nurse_name = _get_display_name(request_obj.accepted_nurse.user)
 
         NotificationService.create_for_object(
             recipient=patient_user,
@@ -272,7 +280,7 @@ class NurseRequestNotifier:
         nurse_user = None
         if request_obj.accepted_nurse:
             nurse_user = request_obj.accepted_nurse.user
-            nurse_name = nurse_user.get_full_name() or nurse_user.email
+            nurse_name = _get_display_name(nurse_user)
 
         patient_user = request_obj.get_patient_user()
         patient_name = request_obj.get_patient_display_name()
@@ -360,10 +368,7 @@ class NurseRequestNotifier:
             if patient_user:
                 nurse_name = ''
                 if request_obj.accepted_nurse:
-                    nurse_name = (
-                        request_obj.accepted_nurse.user.get_full_name()
-                        or request_obj.accepted_nurse.user.email
-                    )
+                    nurse_name = _get_display_name(request_obj.accepted_nurse.user)
                 NotificationService.create_for_object(
                     recipient=patient_user,
                     title='❌ Request Cancelled',
