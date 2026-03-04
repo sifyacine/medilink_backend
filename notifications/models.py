@@ -105,29 +105,44 @@ class DeviceToken(models.Model):
 class Notification(models.Model):
     """
     Stores persistent notification history for users.
+    All fields match the production PostgreSQL schema exactly.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
     title = models.CharField(max_length=255)
-    body = models.TextField(db_column='message')  # DB column is 'message' from original schema
+    body = models.TextField(db_column='message')  # DB column is 'message'
+    image_url = models.URLField(max_length=200, blank=True, null=True)
     notification_type = models.CharField(
         max_length=50,
         choices=NotificationType.choices,
         default=NotificationType.GENERAL
-    )
-    priority = models.CharField(
-        max_length=20,
-        choices=NotificationPriority.choices,
-        default=NotificationPriority.NORMAL
     )
     category = models.CharField(
         max_length=50,
         choices=NotificationCategory.choices,
         default=NotificationCategory.GENERAL
     )
-    data = models.JSONField(default=dict, blank=True)
+    priority = models.CharField(
+        max_length=20,
+        choices=NotificationPriority.choices,
+        default=NotificationPriority.NORMAL
+    )
+    related_object_id = models.CharField(max_length=255, blank=True, null=True)
+    related_content_type = models.ForeignKey(
+        'contenttypes.ContentType',
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+    )
     is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(blank=True, null=True)
+    push_sent = models.BooleanField(default=False)
+    push_sent_at = models.DateTimeField(blank=True, null=True)
+    action_url = models.CharField(max_length=500, blank=True, default='')
+    data = models.JSONField(default=dict, blank=True)
+    expires_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         db_table = 'notifications'
