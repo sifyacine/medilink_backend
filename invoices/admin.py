@@ -9,6 +9,7 @@ Provides Django admin interface for:
 """
 from django.contrib import admin
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from django.urls import reverse
 
 from .models import Invoice, InvoiceItem, Payment, InvoiceActivity, InvoiceStatus
@@ -149,7 +150,7 @@ class InvoiceAdmin(admin.ModelAdmin):
                 '<span style="color: #dc3545; font-weight: bold;">{} {}</span>',
                 obj.amount_due, obj.currency
             )
-        return format_html(
+        return mark_safe(
             '<span style="color: #28a745;">Paid</span>'
         )
     amount_due_display.short_description = 'Amount Due'
