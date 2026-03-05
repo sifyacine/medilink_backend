@@ -22,6 +22,7 @@ from patients.views import (
     my_share_tokens,
     my_medical_records,
     patient_medical_history,
+    provider_patient_stats,
 )
 
 app_name = 'patients'
@@ -37,6 +38,9 @@ share_token_router.register(r'', ShareTokenViewSet, basename='share-token')
 urlpatterns = [
     # Link account endpoint (must be before router to avoid conflict)
     path('link-account/', link_patient_account, name='link-account'),
+
+    # Provider patient stats (dashboard)
+    path('provider-stats/', provider_patient_stats, name='provider-patient-stats'),
     
     # Get my patient record
     path('me/', my_patient_record, name='my-patient-record'),

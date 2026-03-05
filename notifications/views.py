@@ -428,6 +428,51 @@ def clear_all_notifications_api(request):
 
 
 # ============================================
+# DASHBOARD / ACTIVITY FEED
+# ============================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def activity_feed_api(request):
+    """
+    Get the recent activity feed for the authenticated provider.
+
+    Returns a combined list of recent appointments, invoices, and reviews
+    sorted by timestamp descending.
+
+    GET /api/notifications/activity-feed/
+    Query params:
+        - limit: int (default 20, max 50) — number of items to return
+    """
+    from common.enums import UserRole
+
+    user = request.user
+    if user.role != UserRole.PROVIDER:
+        return Response(
+            {'error': 'Only providers can access the activity feed.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        provider = user.provider_profile
+    except Exception:
+        return Response(
+            {'error': 'Provider profile not found.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        limit = min(int(request.query_params.get('limit', 20)), 50)
+    except (TypeError, ValueError):
+        limit = 20
+
+    from .dashboard_services import DashboardStatsService
+
+    items = DashboardStatsService.get_recent_activity(provider, limit=limit)
+    return Response({'count': len(items), 'results': items})
+
+
+# ============================================
 # SERVICE WORKER (For web push)
 # ============================================
 

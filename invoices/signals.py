@@ -7,6 +7,7 @@ to automatically create invoices when appropriate.
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.conf import settings
+from django.db import transaction
 
 from .models import Invoice, InvoiceActivity, InvoiceStatus
 
@@ -118,3 +119,30 @@ def log_invoice_status_change(sender, instance, created, **kwargs):
     
     # This is handled by the views/services, so we don't duplicate
     # unless it's a system change (like overdue check)
+
+
+@receiver(post_save, sender=Invoice)
+def push_dashboard_invoice_update(sender, instance, **kwargs):
+    """Push updated invoice stats to the provider's dashboard WebSocket."""
+    provider = instance.provider
+    if not provider:
+        return
+
+    def _push():
+        from notifications.services import WebSocketBroadcaster
+        from notifications.dashboard_services import DashboardStatsService
+        import logging
+
+        try:
+            data = DashboardStatsService.get_invoice_summary(provider)
+            WebSocketBroadcaster.send_to_dashboard(
+                user_id=provider.user_id,
+                message_type='dashboard_invoices_updated',
+                data=data,
+            )
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                "Error pushing dashboard invoice update: %s", e
+            )
+
+    transaction.on_commit(_push)

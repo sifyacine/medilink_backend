@@ -1018,3 +1018,34 @@ def patient_medical_history(request, patient_id):
         })
     
     return Response(response_data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def provider_patient_stats(request):
+    """
+    Get patient statistics for the authenticated provider's dashboard.
+
+    Returns total patient count and gender breakdown.
+
+    GET /api/patients/provider-stats/
+    """
+    user = request.user
+    if user.role != UserRole.PROVIDER:
+        return Response(
+            {'error': 'Only providers can access patient stats.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        provider = user.provider_profile
+    except Exception:
+        return Response(
+            {'error': 'Provider profile not found.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    from notifications.dashboard_services import DashboardStatsService
+
+    stats = DashboardStatsService.get_patient_stats(provider)
+    return Response(stats)

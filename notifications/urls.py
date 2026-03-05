@@ -63,4 +63,8 @@ urlpatterns = [
     # Clear all notifications
     # DELETE /api/notifications/clear-all/
     path('notifications/clear-all/', views.clear_all_notifications_api, name='clear_all_notifications'),
+
+    # Activity feed (provider dashboard)
+    # GET /api/notifications/activity-feed/
+    path('notifications/activity-feed/', views.activity_feed_api, name='activity_feed'),
 ]

@@ -76,6 +76,9 @@ def handle_appointment_save(sender, instance, created, **kwargs):
                     # Non-status field update (notes, meeting_link, services, etc.)
                     # Broadcast a lightweight WS event so open dashboards stay in sync.
                     _broadcast_generic_update(fresh)
+
+            # Push updated dashboard stats to the provider
+            _push_dashboard_appointment_update(fresh.provider)
         except Appointment.DoesNotExist:
             logger.warning("Appointment %s no longer exists, skipping notification", appointment_id)
         except Exception as e:
@@ -227,6 +230,29 @@ def _broadcast_generic_update(appointment):
         logger.error("Error broadcasting generic appointment update: %s", e)
 
 
+def _push_dashboard_appointment_update(provider):
+    """
+    Push fresh appointment stats + today's appointment list to the
+    provider's dashboard WebSocket group.
+    """
+    from notifications.services import WebSocketBroadcaster
+    from notifications.dashboard_services import DashboardStatsService
+
+    try:
+        user_id = provider.user_id
+        data = {
+            'appointments': DashboardStatsService.get_appointment_stats(provider),
+            'today_appointments': DashboardStatsService.get_today_appointments(provider),
+        }
+        WebSocketBroadcaster.send_to_dashboard(
+            user_id=user_id,
+            message_type='dashboard_appointments_updated',
+            data=data,
+        )
+    except Exception as e:
+        logger.error("Error pushing dashboard appointment update: %s", e)
+
+
 # ------------------------------------------------------------------
 # Deletion signals — broadcast appointment_deleted via WebSocket
 # ------------------------------------------------------------------
@@ -284,5 +310,14 @@ def broadcast_appointment_deleted(sender, instance, **kwargs):
             )
         except Exception as e:
             logger.error("Error broadcasting appointment deletion: %s", e)
+
+        # Push updated dashboard stats to provider
+        if captured.get('provider_id'):
+            try:
+                from providers.models.provider import Provider
+                provider = Provider.objects.get(pk=captured['provider_id'])
+                _push_dashboard_appointment_update(provider)
+            except Exception as e:
+                logger.error("Error pushing dashboard update after delete: %s", e)
 
     transaction.on_commit(_notify_deleted)

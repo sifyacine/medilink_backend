@@ -500,6 +500,14 @@ class WebSocketBroadcaster:
     # ----- Internal -----
 
     @staticmethod
+    def send_to_dashboard(user_id, message_type: str, data: dict) -> None:
+        """Send to a provider's dashboard group."""
+        WebSocketBroadcaster._send(
+            f"user_{user_id}_dashboard",
+            {"type": message_type, "data": data},
+        )
+
+    @staticmethod
     def _send_to_user_groups(user_id, message_type: str, data: dict) -> None:
         """Push to both the notification and appointment groups of a user."""
         # Notification stream
@@ -517,6 +525,12 @@ class WebSocketBroadcaster:
         if "nurse_request" in message_type:
             WebSocketBroadcaster._send(
                 f"user_{user_id}_nurse_requests",
+                {"type": message_type, "data": data},
+            )
+        # Dashboard stream
+        if "dashboard" in message_type:
+            WebSocketBroadcaster._send(
+                f"user_{user_id}_dashboard",
                 {"type": message_type, "data": data},
             )
 
