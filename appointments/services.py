@@ -573,10 +573,14 @@ class AppointmentService:
         cutoff = now - timedelta(minutes=grace_minutes)
 
         # Build cutoff conditions: past date, or today with time already passed
-        past_q = Q(scheduled_date__lt=cutoff.date()) | (
-            Q(scheduled_date=cutoff.date()) &
-            Q(scheduled_time__isnull=False) &
-            Q(scheduled_time__lt=cutoff.time())
+        # For appointments with no scheduled_time, cancel once the entire day has passed
+        past_q = (
+            Q(scheduled_date__lt=cutoff.date()) |
+            (
+                Q(scheduled_date=cutoff.date()) &
+                Q(scheduled_time__isnull=False) &
+                Q(scheduled_time__lt=cutoff.time())
+            )
         )
 
         queryset = Appointment.objects.filter(

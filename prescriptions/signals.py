@@ -54,9 +54,11 @@ def _create_medical_record_for_prescription(prescription):
         if item.dosage:
             med_str += f" ({item.dosage})"
         if item.frequency:
-            med_str += f" - {item.frequency}"
-        if item.duration:
-            med_str += f" for {item.duration}"
+            med_str += f" - {item.get_frequency_display()}"
+        if item.duration_text:
+            med_str += f" for {item.duration_text}"
+        elif item.duration_days:
+            med_str += f" for {item.duration_days} days"
         medication_list.append(med_str)
     
     medications_text = "\n".join(medication_list) if medication_list else "No medications listed"

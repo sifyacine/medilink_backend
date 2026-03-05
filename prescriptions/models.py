@@ -20,7 +20,12 @@ from providers.models.provider import Provider
 
 def prescription_pdf_path(instance, filename):
     """Generate upload path for prescription PDFs."""
-    return f'prescriptions/{instance.patient.id}/{instance.id}/{filename}'
+    patient_id = (
+        instance.patient_id if instance.patient_id
+        else instance.patient_record_id if instance.patient_record_id
+        else instance.id
+    )
+    return f'prescriptions/{patient_id}/{instance.id}/{filename}'
 
 
 class PrescriptionStatus(models.TextChoices):
@@ -201,14 +206,20 @@ class Prescription(models.Model):
         super().save(*args, **kwargs)
     
     def _generate_reference_number(self):
-        """Generate a unique reference number."""
+        """Generate a unique reference number with collision retry."""
         import random
         import string
         from datetime import date
         
         today = date.today()
         prefix = f'RX{today.strftime("%y%m%d")}'
-        suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        for _ in range(10):
+            suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+            ref = f'{prefix}-{suffix}'
+            if not Prescription.objects.filter(reference_number=ref).exists():
+                return ref
+        # Final fallback with longer suffix
+        suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
         return f'{prefix}-{suffix}'
     
     def clean(self):
@@ -245,6 +256,9 @@ class Prescription(models.Model):
         if self.status != PrescriptionStatus.DRAFT:
             raise ValidationError(f'Cannot issue prescription with status {self.status}')
         
+        if self.items.count() == 0:
+            raise ValidationError('Cannot issue a prescription with no medication items.')
+        
         self.status = PrescriptionStatus.ISSUED
         self.issued_at = timezone.now()
         
@@ -279,6 +293,29 @@ class Prescription(models.Model):
         if self.valid_until and self.valid_until < timezone.now().date():
             return False
         return True
+
+    def expire(self, save=True):
+        """Mark an issued prescription as expired."""
+        if self.status != PrescriptionStatus.ISSUED:
+            raise ValidationError(f'Cannot expire prescription with status {self.status}')
+        self.status = PrescriptionStatus.EXPIRED
+        if save:
+            self.save(update_fields=['status', 'updated_at'])
+
+    @classmethod
+    def expire_past_valid_until(cls):
+        """
+        Bulk-expire ISSUED prescriptions whose valid_until date has passed.
+        Returns the number of expired prescriptions.
+        """
+        today = timezone.now().date()
+        qs = cls.objects.filter(
+            status=PrescriptionStatus.ISSUED,
+            valid_until__isnull=False,
+            valid_until__lt=today,
+        )
+        count = qs.update(status=PrescriptionStatus.EXPIRED)
+        return count
 
 
 class MedicationType(models.TextChoices):

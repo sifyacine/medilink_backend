@@ -7,7 +7,9 @@ from appointments.services import AppointmentService
 class Command(BaseCommand):
     help = (
         "Auto-cancel appointments whose scheduled time has passed "
-        "(PENDING/CONFIRMED/RESCHEDULED)."
+        "(PENDING/CONFIRMED/RESCHEDULED).\n\n"
+        "Recommended cron schedule (every 15 minutes):\n"
+        "  */15 * * * * cd /path/to/project && python manage.py auto_cancel_past_appointments\n"
     )
 
     def add_arguments(self, parser):

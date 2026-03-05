@@ -9,7 +9,7 @@ This module provides API endpoints for prescription management:
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
@@ -53,7 +53,14 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
     - GET /api/prescriptions/choices/ - Get enum choices
     """
     queryset = Prescription.objects.all()
-    parser_classes = [MultiPartParser, FormParser]
+    
+    ALLOWED_ORDERING_FIELDS = {
+        'created_at', '-created_at',
+        'issued_at', '-issued_at',
+        'valid_until', '-valid_until',
+        'status', '-status',
+        'updated_at', '-updated_at',
+    }
     
     def get_permissions(self):
         """Set permissions based on action."""
@@ -112,7 +119,8 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
             Q(patient_record__user=user)
         )
     
-    @action(detail=True, methods=['post'], url_path='upload-pdf')
+    @action(detail=True, methods=['post'], url_path='upload-pdf',
+            parser_classes=[MultiPartParser, FormParser])
     def upload_pdf(self, request, pk=None):
         """
         Upload PDF file for a prescription.
@@ -247,6 +255,8 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
         
         # Ordering
         ordering = request.query_params.get('ordering', '-created_at')
+        if ordering not in self.ALLOWED_ORDERING_FIELDS:
+            ordering = '-created_at'
         queryset = queryset.order_by(ordering)
         
         page = self.paginate_queryset(queryset)
@@ -316,6 +326,8 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
         
         # Ordering
         ordering = request.query_params.get('ordering', '-created_at')
+        if ordering not in self.ALLOWED_ORDERING_FIELDS:
+            ordering = '-created_at'
         queryset = queryset.order_by(ordering)
         
         page = self.paginate_queryset(queryset)
@@ -414,3 +426,22 @@ class PrescriptionItemViewSet(viewsets.ModelViewSet):
             )
         
         return super().update(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+        """Only allow creating items on draft prescriptions."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        prescription_id = request.data.get('prescription')
+        if prescription_id:
+            try:
+                prescription = Prescription.objects.get(pk=prescription_id)
+                if prescription.status != PrescriptionStatus.DRAFT:
+                    return Response(
+                        {'error': 'Can only add items to draft prescriptions.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except Prescription.DoesNotExist:
+                pass
+
+        return super().create(request, *args, **kwargs)

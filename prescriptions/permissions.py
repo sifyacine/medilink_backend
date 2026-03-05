@@ -82,6 +82,10 @@ class CanViewPrescription(BasePermission):
         if obj.patient == user:
             return True
         
+        # Patient via patient_record link
+        if obj.patient_record and hasattr(obj.patient_record, 'user') and obj.patient_record.user == user:
+            return True
+        
         return False
 
 

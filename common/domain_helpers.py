@@ -38,7 +38,7 @@ class AppointmentStatusTransition:
     VALID_TRANSITIONS: Dict[str, Set[str]] = {
         'PENDING': {'CONFIRMED', 'REJECTED', 'CANCELLED', 'RESCHEDULED'},
         'CONFIRMED': {'COMPLETED', 'NO_SHOW', 'CANCELLED', 'RESCHEDULED'},
-        'RESCHEDULED': {'CONFIRMED', 'CANCELLED', 'RESCHEDULED'},
+        'RESCHEDULED': {'CONFIRMED', 'CANCELLED', 'RESCHEDULED', 'COMPLETED', 'NO_SHOW'},
         'REJECTED': set(),  # Terminal state
         'CANCELLED': set(),  # Terminal state
         'COMPLETED': set(),  # Terminal state
