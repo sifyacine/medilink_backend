@@ -137,6 +137,9 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
     async def appointment_reminder(self, event):
         await self.send_json({"type": "appointment_reminder", "data": event.get("data", {})})
 
+    async def appointment_deleted(self, event):
+        await self.send_json({"type": "appointment_deleted", "data": event.get("data", {})})
+
     # Nurse request event handlers — forward to client
     async def nurse_request_new(self, event):
         await self.send_json({"type": "nurse_request_new", "data": event.get("data", {})})

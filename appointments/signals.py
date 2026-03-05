@@ -8,7 +8,7 @@ Creates real-time notifications when appointment events occur.
 
 Automatically adds patients to provider's patient list on confirmation.
 """
-from django.db.models.signals import post_save, pre_save
+from django.db.models.signals import post_save, pre_save, pre_delete, post_delete
 from django.dispatch import receiver
 from django.db import transaction
 import logging
@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 # Track status changes
 _previous_status = {}
+
+# Track data from deleted appointments so post_delete can broadcast
+_deleted_appointment_data = {}
 
 
 @receiver(pre_save, sender=Appointment)
@@ -222,3 +225,64 @@ def _broadcast_generic_update(appointment):
         )
     except Exception as e:
         logger.error("Error broadcasting generic appointment update: %s", e)
+
+
+# ------------------------------------------------------------------
+# Deletion signals — broadcast appointment_deleted via WebSocket
+# ------------------------------------------------------------------
+
+@receiver(pre_delete, sender=Appointment)
+def capture_appointment_before_delete(sender, instance, **kwargs):
+    """
+    Capture appointment data before deletion so post_delete can broadcast
+    a WebSocket event (FK relationships are still accessible here).
+    """
+    _deleted_appointment_data[instance.pk] = {
+        'appointment_id': str(instance.pk),
+        'provider_id': instance.provider_id,
+        'patient_user_id': instance.patient_user_id,
+    }
+
+
+@receiver(post_delete, sender=Appointment)
+def broadcast_appointment_deleted(sender, instance, **kwargs):
+    """
+    After an appointment is deleted (e.g. from Django admin), broadcast an
+    appointment_deleted event so connected frontends can remove it from their lists.
+    """
+    captured = _deleted_appointment_data.pop(instance.pk, None)
+    if not captured:
+        return
+
+    def _notify_deleted():
+        from notifications.services import WebSocketBroadcaster
+
+        try:
+            ws_payload = {
+                'appointment_id': captured['appointment_id'],
+                'message': 'Appointment has been deleted',
+            }
+
+            if captured.get('provider_id'):
+                WebSocketBroadcaster.send_to_provider(
+                    provider_id=captured['provider_id'],
+                    message_type='appointment_deleted',
+                    data=ws_payload,
+                )
+
+            if captured.get('patient_user_id'):
+                WebSocketBroadcaster.send_to_patient(
+                    user_id=captured['patient_user_id'],
+                    message_type='appointment_deleted',
+                    data=ws_payload,
+                )
+
+            WebSocketBroadcaster.send_to_appointment(
+                appointment_id=captured['appointment_id'],
+                message_type='appointment_deleted',
+                data=ws_payload,
+            )
+        except Exception as e:
+            logger.error("Error broadcasting appointment deletion: %s", e)
+
+    transaction.on_commit(_notify_deleted)

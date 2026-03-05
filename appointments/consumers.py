@@ -19,6 +19,7 @@ Outgoing message types sent TO the client:
     - appointment_no_show       : patient marked as no-show
     - appointment_reminder      : upcoming appointment reminder
     - appointment_updated       : generic status change catch-all
+    - appointment_deleted       : appointment was deleted (e.g. admin)
 
 Incoming client messages:
     - ping                      : keep-alive → pong
@@ -144,6 +145,13 @@ class AppointmentConsumer(AsyncJsonWebsocketConsumer):
         """Generic catch-all for any appointment update."""
         await self.send_json({
             "type": "appointment_updated",
+            "data": event.get("data", {}),
+        })
+
+    async def appointment_deleted(self, event):
+        """Appointment was deleted (e.g. from admin)."""
+        await self.send_json({
+            "type": "appointment_deleted",
             "data": event.get("data", {}),
         })
 
