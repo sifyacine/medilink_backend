@@ -57,7 +57,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
     # read a generic `subtype` field (e.g. DOCTOR, CLINIC).
     subtype = serializers.SerializerMethodField()
     subtype_display = serializers.SerializerMethodField()
-    
+    # Admin-specific profile data (sub_role, notes) for ADMIN users
+    admin_profile = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
@@ -84,6 +86,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'updated_at',
             'provider_profile',
             'patient_profile',
+            'admin_profile',
             'addresses',
             'provider_type',
             'provider_type_display',
@@ -94,7 +97,22 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def get_full_name(self, obj):
         """Return full name from model method."""
         return obj.get_full_name()
-    
+
+    def get_admin_profile(self, obj):
+        """Return admin sub-role and notes for ADMIN users."""
+        if obj.role != UserRole.ADMIN:
+            return None
+        try:
+            profile = obj.admin_profile
+            return {
+                'sub_role': profile.sub_role,
+                'sub_role_display': profile.get_sub_role_display(),
+                'notes': profile.notes,
+            }
+        except Exception:
+            # AdminProfile doesn't exist yet — still valid ADMIN user
+            return {'sub_role': None, 'sub_role_display': None, 'notes': ''}
+
     def get_provider_profile(self, obj):
         """Get provider-specific profile data if user is a provider."""
         if obj.role != UserRole.PROVIDER:
