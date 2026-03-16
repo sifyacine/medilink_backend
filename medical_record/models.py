@@ -239,7 +239,7 @@ class Prescription(models.Model):
         verbose_name_plural = 'Prescriptions'
     
     def __str__(self):
-        return f'{self.medication_name} - {self.medical_record.patient.email}'
+        return f'{self.medication_name} - {self.medical_record.patient_display_name}'
 
 
 class Allergy(models.Model):
@@ -283,7 +283,7 @@ class Allergy(models.Model):
         verbose_name_plural = 'Allergies'
     
     def __str__(self):
-        return f'{self.allergen} allergy - {self.medical_record.patient.email}'
+        return f'{self.allergen} allergy - {self.medical_record.patient_display_name}'
 
 
 class MedicalRecordAttachment(models.Model):

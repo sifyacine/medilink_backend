@@ -19,6 +19,7 @@ class UserSerializer(serializers.ModelSerializer):
             'role',
             'first_name',
             'last_name',
+            'profile_image',
             'full_name',
             'phone_number',
             'is_active',

@@ -29,6 +29,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(read_only=True)
     full_name = serializers.SerializerMethodField()
     phone_number = serializers.CharField(read_only=True)
+    profile_image = serializers.ImageField(read_only=True)
     
     # Verification and status
     email_verified = serializers.BooleanField(read_only=True)
@@ -68,6 +69,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'last_name',
             'full_name',
             'phone_number',
+            'profile_image',
             'account_status',
             'account_status_display',
             'is_active',
@@ -447,7 +449,7 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         """
         # For patients, first_name, last_name, and phone_number are stored 
         # directly on the User model. For providers, they go to subtype profiles.
-        patient_direct_fields = ['first_name', 'last_name', 'phone_number']
+        patient_direct_fields = ['first_name', 'last_name', 'phone_number', 'profile_image']
         
         # Pull out profile-related fields so they are not applied
         # to the User instance directly (for providers).

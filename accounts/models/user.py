@@ -114,6 +114,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         help_text='Phone number'
     )
+    profile_image = models.ImageField(
+        upload_to='users/profiles/',
+        null=True,
+        blank=True,
+        help_text='Profile image for account users'
+    )
     
     # Login tracking
     last_login = models.DateTimeField(
