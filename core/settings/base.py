@@ -88,6 +88,7 @@ INSTALLED_APPS = [
     'reviews',  # Universal reviews and ratings system
     'reports',  # Universal reporting and moderation system
     'invoices',  # Invoice and payment management
+    'platform_content',  # CMS: landing page, blog, FAQs, announcements, etc.
 ]
 
 # Invoice Settings

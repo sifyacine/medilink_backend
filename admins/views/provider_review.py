@@ -17,6 +17,8 @@ from admins.serializers.provider_review import (
 from common.permissions import IsAdmin
 from common.enums import ProviderStatus
 from providers.services import approve_provider, refuse_provider
+from admins.services import suspend_provider, restore_provider, get_client_ip
+from admins.permissions import IsModerator
 
 
 class AdminProviderViewSet(viewsets.ReadOnlyModelViewSet):
@@ -141,3 +143,49 @@ class AdminProviderViewSet(viewsets.ReadOnlyModelViewSet):
             'message': 'Provider refused successfully.',
             'provider': detail_serializer.data,
         }, status=status.HTTP_200_OK)
+
+        @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsModerator])
+        def suspend(self, request, pk=None):
+            """
+            Suspend an approved provider.
+
+            POST /api/admin/providers/{id}/suspend/
+            Body: {"reason": "..."}  (optional)
+            """
+            provider = self.get_object()
+            if provider.status == ProviderStatus.SUSPENDED:
+                return Response(
+                    {'error': 'Provider is already suspended.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            reason = request.data.get('reason', '')
+            ip = get_client_ip(request)
+            suspend_provider(provider, request.user, reason, ip)
+            provider.refresh_from_db()
+            serializer = ProviderDetailSerializer(provider)
+            return Response(
+                {'message': 'Provider suspended successfully.', 'provider': serializer.data},
+                status=status.HTTP_200_OK,
+            )
+
+        @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsModerator])
+        def restore(self, request, pk=None):
+            """
+            Restore a suspended provider back to APPROVED.
+
+            POST /api/admin/providers/{id}/restore/
+            """
+            provider = self.get_object()
+            if provider.status != ProviderStatus.SUSPENDED:
+                return Response(
+                    {'error': 'Only suspended providers can be restored.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            ip = get_client_ip(request)
+            restore_provider(provider, request.user, ip)
+            provider.refresh_from_db()
+            serializer = ProviderDetailSerializer(provider)
+            return Response(
+                {'message': 'Provider restored successfully.', 'provider': serializer.data},
+                status=status.HTTP_200_OK,
+            )

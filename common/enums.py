@@ -41,3 +41,34 @@ class UserAccountStatus(models.TextChoices):
     ACTIVE = 'ACTIVE', 'Active'
     SUSPENDED = 'SUSPENDED', 'Suspended'
     DEACTIVATED = 'DEACTIVATED', 'Deactivated'
+
+
+class AdminSubRole(models.TextChoices):
+    """
+    Sub-roles within the ADMIN user role.
+    
+    SUPER_ADMIN:    Full access — can manage other admins, all platform features.
+    MODERATOR:      Approve/refuse providers, suspend users, moderate reports.
+    SUPPORT:        View users & logs, reset passwords (mostly read-only).
+    CONTENT_EDITOR: Manage platform content only (landing page, FAQ, blog, etc.).
+    """
+    SUPER_ADMIN    = 'SUPER_ADMIN',    'Super Admin'
+    MODERATOR      = 'MODERATOR',      'Moderator'
+    SUPPORT        = 'SUPPORT',        'Support'
+    CONTENT_EDITOR = 'CONTENT_EDITOR', 'Content Editor'
+
+
+class AdminActionType(models.TextChoices):
+    """Action types recorded in the AdminActivityLog."""
+    USER_SUSPEND        = 'USER_SUSPEND',        'User Suspended'
+    USER_ACTIVATE       = 'USER_ACTIVATE',       'User Activated'
+    USER_DEACTIVATE     = 'USER_DEACTIVATE',     'User Deactivated'
+    USER_PASSWORD_RESET = 'USER_PASSWORD_RESET', 'Password Reset Sent'
+    PROVIDER_APPROVE    = 'PROVIDER_APPROVE',    'Provider Approved'
+    PROVIDER_REFUSE     = 'PROVIDER_REFUSE',     'Provider Refused'
+    PROVIDER_SUSPEND    = 'PROVIDER_SUSPEND',    'Provider Suspended'
+    PROVIDER_RESTORE    = 'PROVIDER_RESTORE',    'Provider Restored'
+    PATIENT_SUSPEND     = 'PATIENT_SUSPEND',     'Patient Suspended'
+    CONTENT_CREATE      = 'CONTENT_CREATE',      'Content Created'
+    CONTENT_UPDATE      = 'CONTENT_UPDATE',      'Content Updated'
+    CONTENT_DELETE      = 'CONTENT_DELETE',      'Content Deleted'

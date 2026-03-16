@@ -1,4 +1,24 @@
 """Admins views."""
 from admins.views.provider_review import AdminProviderViewSet
+from admins.views.users import UserManagementViewSet
+from admins.views.patients import AdminPatientViewSet
+from admins.views.analytics import (
+	OverviewView,
+	UserStatsView,
+	AppointmentStatsView,
+	RevenueStatsView,
+	ProviderStatsView,
+)
+from admins.views.activity_log import AdminActivityLogViewSet
 
-__all__ = ['AdminProviderViewSet']
+__all__ = [
+	'AdminProviderViewSet',
+	'UserManagementViewSet',
+	'AdminPatientViewSet',
+	'OverviewView',
+	'UserStatsView',
+	'AppointmentStatsView',
+	'RevenueStatsView',
+	'ProviderStatsView',
+	'AdminActivityLogViewSet',
+]

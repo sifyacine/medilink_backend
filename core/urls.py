@@ -5,6 +5,8 @@ from django.conf.urls.static import static
 
 # Import service worker view for web push notifications
 from notifications.views import service_worker
+from platform_content.urls import admin_urlpatterns as platform_admin_urls
+from platform_content.urls import public_urlpatterns as platform_public_urls
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -59,7 +61,12 @@ urlpatterns = [
     
     # Invoices endpoints
     path('api/invoices/', include('invoices.urls')),
-    
+
+    # Platform content – admin write endpoints (CONTENT_EDITOR only)
+    path('api/admin/platform/', include(platform_admin_urls)),
+    # Platform content – public read-only endpoints
+    path('api/platform/', include(platform_public_urls)),
+
     # django-allauth URLs (for email verification pages if needed)
     path('accounts/', include('allauth.urls')),
 ]
