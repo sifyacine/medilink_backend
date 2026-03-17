@@ -1,4 +1,4 @@
-"""
+﻿"""
 Admin view for the AdminActivityLog (read-only).
 
 Endpoints:
@@ -11,7 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import viewsets
 
 from admins.models import AdminActivityLog
-from admins.permissions import IsSupport
+from admins.permissions import IsAdmin
 from admins.serializers.activity_log import AdminActivityLogSerializer
 
 
@@ -25,7 +25,7 @@ class AdminActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
     Filtering:
         ?action=USER_SUSPEND
         ?admin=<user_id>
-        ?date_from=2026-01-01&date_to=2026-03-01  (via search_fields override — use ordering)
+        ?date_from=2026-01-01&date_to=2026-03-01  (via search_fields override â€” use ordering)
 
     Ordering: -created_at (default)
     """
@@ -34,10 +34,11 @@ class AdminActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
     ).order_by('-created_at')
 
     serializer_class = AdminActivityLogSerializer
-    permission_classes = [IsAuthenticated, IsSupport]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['action', 'admin']
     search_fields = ['object_repr', 'admin__email']
     ordering_fields = ['created_at']
     ordering = ['-created_at']
+

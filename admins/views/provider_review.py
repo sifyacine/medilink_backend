@@ -1,4 +1,4 @@
-"""
+﻿"""
 Admin views for provider verification workflow.
 """
 from rest_framework import status, viewsets
@@ -18,7 +18,7 @@ from common.permissions import IsAdmin
 from common.enums import ProviderStatus
 from providers.services import approve_provider, refuse_provider
 from admins.services import suspend_provider, restore_provider, get_client_ip
-from admins.permissions import IsModerator
+from admins.permissions import IsAdmin
 
 
 class AdminProviderViewSet(viewsets.ReadOnlyModelViewSet):
@@ -189,3 +189,4 @@ class AdminProviderViewSet(viewsets.ReadOnlyModelViewSet):
                 {'message': 'Provider restored successfully.', 'provider': serializer.data},
                 status=status.HTTP_200_OK,
             )
+

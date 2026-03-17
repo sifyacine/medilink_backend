@@ -1,4 +1,4 @@
-"""
+﻿"""
 URL configuration for admins app.
 """
 from django.urls import path, include
@@ -9,6 +9,7 @@ from admins.views import (
     UserManagementViewSet,
     AdminPatientViewSet,
     AdminActivityLogViewSet,
+    AdminInvoiceViewSet,
     OverviewView,
     UserStatsView,
     AppointmentStatsView,
@@ -23,10 +24,10 @@ router.register(r'providers', AdminProviderViewSet, basename='admin-provider')
 router.register(r'users', UserManagementViewSet, basename='admin-users')
 router.register(r'patients', AdminPatientViewSet, basename='admin-patients')
 router.register(r'logs', AdminActivityLogViewSet, basename='admin-activity-logs')
+router.register(r'invoices', AdminInvoiceViewSet, basename='admin-invoices')
 
 urlpatterns = [
     path('', include(router.urls)),
-    # Analytics endpoints
     path('analytics/overview/', OverviewView.as_view(), name='analytics-overview'),
     path('analytics/users/', UserStatsView.as_view(), name='analytics-users'),
     path('analytics/appointments/', AppointmentStatsView.as_view(), name='analytics-appointments'),

@@ -1,5 +1,5 @@
-"""
-Admin analytics views — platform-wide statistics using ORM aggregations.
+﻿"""
+Admin analytics views -- platform-wide statistics using ORM aggregations.
 
 Endpoints:
   GET /api/admin/analytics/overview/
@@ -17,28 +17,21 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from admins.permissions import IsSupport
+from admins.permissions import IsAdmin
 from common.enums import ProviderStatus, ProviderType, UserAccountStatus
 
 
 class OverviewView(APIView):
-    """
-    GET /api/admin/analytics/overview/
-
-    Returns headline platform statistics for the admin dashboard summary cards.
-    """
-    permission_classes = [IsAuthenticated, IsSupport]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
         from django.contrib.auth import get_user_model
         User = get_user_model()
-
         from providers.models import Provider
         from patients.models import PatientRecord
 
         now = timezone.now()
 
-        # User counts
         total_users = User.objects.count()
         active_users = User.objects.filter(account_status=UserAccountStatus.ACTIVE).count()
         suspended_users = User.objects.filter(account_status=UserAccountStatus.SUSPENDED).count()
@@ -46,17 +39,14 @@ class OverviewView(APIView):
             created_at__year=now.year, created_at__month=now.month
         ).count()
 
-        # Provider counts
         total_providers = Provider.objects.count()
         pending_providers = Provider.objects.filter(status=ProviderStatus.PENDING).count()
         new_providers_this_month = Provider.objects.filter(
             created_at__year=now.year, created_at__month=now.month
         ).count()
 
-        # Patient record counts
         total_patients = PatientRecord.objects.filter(is_deleted=False).count()
 
-        # Appointment counts
         total_appointments = 0
         try:
             from appointments.models import Appointment
@@ -64,10 +54,15 @@ class OverviewView(APIView):
         except Exception:
             pass
 
-        # Revenue
         total_revenue = Decimal('0.00')
+        total_invoices = 0
+        paid_invoices = 0
+        pending_invoices = 0
         try:
             from invoices.models import Invoice
+            total_invoices = Invoice.objects.count()
+            paid_invoices = Invoice.objects.filter(status='PAID').count()
+            pending_invoices = Invoice.objects.filter(status__in=['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID']).count()
             result = Invoice.objects.filter(status='PAID').aggregate(total=Sum('total'))
             total_revenue = result['total'] or Decimal('0.00')
         except Exception:
@@ -81,27 +76,24 @@ class OverviewView(APIView):
             'pending_providers': pending_providers,
             'active_users': active_users,
             'suspended_users': suspended_users,
-            'total_revenue': total_revenue,
+            'total_revenue': str(total_revenue),
             'new_users_this_month': new_users_this_month,
             'new_providers_this_month': new_providers_this_month,
+            'total_invoices': total_invoices,
+            'paid_invoices': paid_invoices,
+            'pending_invoices': pending_invoices,
         })
 
 
 class UserStatsView(APIView):
-    """
-    GET /api/admin/analytics/users/?period=daily|weekly|monthly
-
-    Returns user registration time-series data for charting.
-    Default period: daily (last 30 data points).
-    """
-    permission_classes = [IsAuthenticated, IsSupport]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
         from django.contrib.auth import get_user_model
         User = get_user_model()
 
         period = request.query_params.get('period', 'daily')
-        role_filter = request.query_params.get('role')  # optional: PATIENT, PROVIDER
+        role_filter = request.query_params.get('role')
 
         qs = User.objects.all()
         if role_filter:
@@ -129,29 +121,19 @@ class UserStatsView(APIView):
 
 
 class AppointmentStatsView(APIView):
-    """
-    GET /api/admin/analytics/appointments/
-
-    Returns:
-      - status_distribution: count per appointment status
-      - daily_trend: appointments created per day (last 30 days)
-    """
-    permission_classes = [IsAuthenticated, IsSupport]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
         try:
             from appointments.models import Appointment
-            from django.utils import timezone
             import datetime
 
-            # Status distribution
             status_dist = (
                 Appointment.objects.values('status')
                 .annotate(count=Count('id'))
                 .order_by('status')
             )
 
-            # Daily trend — last 30 days
             thirty_days_ago = timezone.now() - timezone.timedelta(days=30)
             daily = (
                 Appointment.objects
@@ -174,21 +156,12 @@ class AppointmentStatsView(APIView):
 
 
 class RevenueStatsView(APIView):
-    """
-    GET /api/admin/analytics/revenue/
-
-    Returns:
-      - monthly_revenue: paid invoice totals per month (last 12 months)
-      - payment_method_breakdown: total + count per payment method
-      - outstanding_balance: total unpaid (SENT + OVERDUE invoices)
-    """
-    permission_classes = [IsAuthenticated, IsSupport]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
         try:
             from invoices.models import Invoice, Payment
 
-            # Monthly revenue (last 12 months)
             twelve_months_ago = timezone.now() - timezone.timedelta(days=365)
             monthly = (
                 Invoice.objects
@@ -199,7 +172,6 @@ class RevenueStatsView(APIView):
                 .order_by('month')
             )
 
-            # Payment method breakdown
             pm_breakdown = (
                 Payment.objects
                 .filter(is_refund=False)
@@ -208,7 +180,6 @@ class RevenueStatsView(APIView):
                 .order_by('-total')
             )
 
-            # Outstanding balance
             outstanding = Invoice.objects.filter(
                 status__in=['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID']
             ).aggregate(total=Sum('total'))
@@ -217,13 +188,13 @@ class RevenueStatsView(APIView):
                 'monthly_revenue': [
                     {
                         'month': e['month'].date(),
-                        'total': e['total'] or Decimal('0.00'),
+                        'total': str(e['total'] or Decimal('0.00')),
                         'count': e['count'],
                     }
                     for e in monthly
                 ],
                 'payment_method_breakdown': list(pm_breakdown),
-                'outstanding_balance': outstanding['total'] or Decimal('0.00'),
+                'outstanding_balance': str(outstanding['total'] or Decimal('0.00')),
             })
         except Exception as exc:
             return Response({
@@ -235,27 +206,17 @@ class RevenueStatsView(APIView):
 
 
 class ProviderStatsView(APIView):
-    """
-    GET /api/admin/analytics/providers/
-
-    Returns:
-      - type_distribution: count per provider_type with status breakdown
-      - status_distribution: total count per status
-      - approval_rate: percentage of approved / (approved + refused)
-    """
-    permission_classes = [IsAuthenticated, IsSupport]
+    permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
         from providers.models import Provider
 
-        # Status distribution
         status_dist = (
             Provider.objects.values('status')
             .annotate(count=Count('id'))
             .order_by('status')
         )
 
-        # Type distribution with status breakdown
         type_stats = []
         for pt in ProviderType.values:
             qs = Provider.objects.filter(provider_type=pt)
@@ -272,7 +233,6 @@ class ProviderStatsView(APIView):
                 'suspended': qs.filter(status=ProviderStatus.SUSPENDED).count(),
             })
 
-        # Approval rate
         approved = Provider.objects.filter(status=ProviderStatus.APPROVED).count()
         refused = Provider.objects.filter(status=ProviderStatus.REFUSED).count()
         total_decided = approved + refused

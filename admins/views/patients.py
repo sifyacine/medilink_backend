@@ -1,4 +1,4 @@
-"""
+﻿"""
 Admin views for patient record management.
 
 Endpoints:
@@ -13,7 +13,7 @@ from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from admins.permissions import IsAdmin, IsModerator, IsSupport
+from admins.permissions import IsAdmin
 from admins.serializers.patients import AdminPatientDetailSerializer, AdminPatientListSerializer
 from admins.services import get_client_ip, suspend_user
 from patients.models import PatientRecord
@@ -23,11 +23,11 @@ class AdminPatientViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Admin viewset for viewing and managing PatientRecord objects.
 
-    The viewset is ReadOnly — patient records are never directly deleted
+    The viewset is ReadOnly â€” patient records are never directly deleted
     by admins (use soft_delete on the model instead).
 
     Additional action:
-        suspend/ — suspend the linked User account if one exists.
+        suspend/ â€” suspend the linked User account if one exists.
     """
 
     queryset = PatientRecord.objects.filter(is_deleted=False).select_related(
@@ -44,9 +44,7 @@ class AdminPatientViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ['-created_at']
 
     def get_permissions(self):
-        if self.action == 'suspend':
-            return [IsAuthenticated(), IsModerator()]
-        return [IsAuthenticated(), IsSupport()]
+        return [IsAuthenticated(), IsAdmin()]
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -55,7 +53,7 @@ class AdminPatientViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='suspend')
     def suspend(self, request, pk=None):
-        """POST /api/admin/patients/{id}/suspend/ — suspend linked user account."""
+        """POST /api/admin/patients/{id}/suspend/ â€” suspend linked user account."""
         record = self.get_object()
 
         if not record.linked_user:
@@ -74,3 +72,4 @@ class AdminPatientViewSet(viewsets.ReadOnlyModelViewSet):
         reason = request.data.get('reason', '')
         suspend_user(user, request.user, reason=reason, ip=get_client_ip(request))
         return Response({'message': 'Patient account suspended successfully.'})
+

@@ -1,4 +1,4 @@
-"""Admins serializers."""
+﻿"""Admins serializers."""
 from admins.serializers.provider_review import (
     ProviderListSerializer,
     ProviderRefuseSerializer,
@@ -22,6 +22,10 @@ from admins.serializers.analytics import (
     PaymentMethodStatSerializer,
 )
 from admins.serializers.activity_log import AdminActivityLogSerializer
+from admins.serializers.invoices import (
+    AdminInvoiceListSerializer,
+    AdminInvoiceDetailSerializer,
+)
 
 __all__ = [
     'ProviderListSerializer',
@@ -39,4 +43,6 @@ __all__ = [
     'RevenueByMonthSerializer',
     'PaymentMethodStatSerializer',
     'AdminActivityLogSerializer',
+    'AdminInvoiceListSerializer',
+    'AdminInvoiceDetailSerializer',
 ]
