@@ -4,6 +4,7 @@ from django.utils.html import format_html
 
 from admins.models.admin_profile import AdminProfile
 from admins.models.activity_log import AdminActivityLog
+from admins.models.products import MediLinkProduct, MediLinkSale
 
 
 @admin.register(AdminProfile)
@@ -120,3 +121,21 @@ class AdminActivityLogAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+
+@admin.register(MediLinkProduct)
+class MediLinkProductAdmin(admin.ModelAdmin):
+    list_display = ['name', 'category', 'selling_price', 'cost_price', 'discount_type', 'discount_value', 'rating', 'is_active', 'added_by', 'created_at']
+    list_filter = ['category', 'discount_type', 'is_active']
+    search_fields = ['name', 'description']
+    readonly_fields = ['created_at', 'updated_at']
+    ordering = ['-created_at']
+
+
+@admin.register(MediLinkSale)
+class MediLinkSaleAdmin(admin.ModelAdmin):
+    list_display = ['product', 'buyer', 'quantity', 'unit_price', 'total_amount', 'status', 'sale_date']
+    list_filter = ['status']
+    search_fields = ['product__name', 'buyer__email', 'reference']
+    readonly_fields = ['sale_date', 'updated_at']
+    ordering = ['-sale_date']

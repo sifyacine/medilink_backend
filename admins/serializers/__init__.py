@@ -26,6 +26,11 @@ from admins.serializers.invoices import (
     AdminInvoiceListSerializer,
     AdminInvoiceDetailSerializer,
 )
+from admins.serializers.products import (
+    MediLinkProductSerializer,
+    MediLinkProductListSerializer,
+    MediLinkSaleSerializer,
+)
 
 __all__ = [
     'ProviderListSerializer',
@@ -45,4 +50,7 @@ __all__ = [
     'AdminActivityLogSerializer',
     'AdminInvoiceListSerializer',
     'AdminInvoiceDetailSerializer',
+    'MediLinkProductSerializer',
+    'MediLinkProductListSerializer',
+    'MediLinkSaleSerializer',
 ]

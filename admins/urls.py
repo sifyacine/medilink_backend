@@ -10,6 +10,8 @@ from admins.views import (
     AdminPatientViewSet,
     AdminActivityLogViewSet,
     AdminInvoiceViewSet,
+    MediLinkProductViewSet,
+    MediLinkIncomeViewSet,
     OverviewView,
     UserStatsView,
     AppointmentStatsView,
@@ -25,6 +27,8 @@ router.register(r'users', UserManagementViewSet, basename='admin-users')
 router.register(r'patients', AdminPatientViewSet, basename='admin-patients')
 router.register(r'logs', AdminActivityLogViewSet, basename='admin-activity-logs')
 router.register(r'invoices', AdminInvoiceViewSet, basename='admin-invoices')
+router.register(r'products', MediLinkProductViewSet, basename='admin-products')
+router.register(r'income', MediLinkIncomeViewSet, basename='admin-income')
 
 urlpatterns = [
     path('', include(router.urls)),

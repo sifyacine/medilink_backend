@@ -1,104 +1,93 @@
 ﻿"""
-Admin views for platform-wide invoice oversight.
+Admin views for MediLink income records under the legacy /invoices endpoints.
 
-Endpoints:
-  GET /api/admin/invoices/              List all invoices (filterable)
-  GET /api/admin/invoices/{id}/         Invoice detail
-  GET /api/admin/invoices/stats/        Aggregate invoice statistics
-  POST /api/admin/invoices/{id}/cancel/ Cancel an invoice (admin override)
+This keeps backward compatibility while ensuring admin "invoices" only show
+MediLink income (platform sales/subscriptions), not provider-to-patient invoices.
 """
-from django.db.models import Count, Q, Sum
+from decimal import Decimal
+
+from django.db.models import Count, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
-from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import status, viewsets
+from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.views import APIView
 
+from admins.models.products import MediLinkSale, SaleStatus
 from admins.permissions import IsAdmin
 
 
 class AdminInvoiceViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    Admin read-only viewset for browsing all platform invoices.
-    Provides an additional /stats/ list action and /cancel/ detail action.
+    Read-only viewset returning MediLink income records via /api/admin/invoices/.
     """
     permission_classes = [IsAuthenticated, IsAdmin]
-    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['status', 'invoice_type', 'currency']
+    filter_backends = [SearchFilter, OrderingFilter]
     search_fields = [
-        'invoice_number',
-        'provider__user__email',
-        'patient__email',
-        'patient__first_name',
-        'patient__last_name',
+        'product__name',
+        'buyer__email',
+        'reference',
+        'notes',
     ]
-    ordering_fields = ['created_at', 'due_date', 'total', 'paid_at']
-    ordering = ['-created_at']
+    ordering_fields = ['sale_date', 'total_amount', 'status']
+    ordering = ['-sale_date']
 
     def get_queryset(self):
-        from invoices.models import Invoice
-        qs = Invoice.objects.select_related(
-            'provider__user', 'patient',
-        ).order_by('-created_at')
+        qs = MediLinkSale.objects.select_related('product', 'buyer', 'recorded_by').order_by('-sale_date')
 
         # Optional date range filtering
         date_from = self.request.query_params.get('date_from')
         date_to = self.request.query_params.get('date_to')
-        provider_id = self.request.query_params.get('provider_id')
+        sale_status = self.request.query_params.get('status')
+        product_id = self.request.query_params.get('product_id')
 
         if date_from:
-            qs = qs.filter(created_at__date__gte=date_from)
+            qs = qs.filter(sale_date__date__gte=date_from)
         if date_to:
-            qs = qs.filter(created_at__date__lte=date_to)
-        if provider_id:
-            qs = qs.filter(provider_id=provider_id)
+            qs = qs.filter(sale_date__date__lte=date_to)
+        if sale_status:
+            qs = qs.filter(status=sale_status)
+        if product_id:
+            qs = qs.filter(product_id=product_id)
 
         return qs
 
     def get_serializer_class(self):
-        from admins.serializers.invoices import AdminInvoiceListSerializer, AdminInvoiceDetailSerializer
-        if self.action == 'list':
-            return AdminInvoiceListSerializer
-        return AdminInvoiceDetailSerializer
+        from admins.serializers.products import MediLinkSaleSerializer
+        return MediLinkSaleSerializer
 
     @action(detail=False, methods=['get'], url_path='stats')
     def stats(self, request):
-        """GET /api/admin/invoices/stats/ -- aggregate invoice statistics."""
-        from invoices.models import Invoice
-        from decimal import Decimal
+        """GET /api/admin/invoices/stats/ - MediLink income-only aggregate stats."""
 
         now = timezone.now()
 
-        total = Invoice.objects.count()
-        paid = Invoice.objects.filter(status='PAID').count()
-        overdue = Invoice.objects.filter(status='OVERDUE').count()
-        draft = Invoice.objects.filter(status='DRAFT').count()
-        cancelled = Invoice.objects.filter(status='CANCELLED').count()
-        pending = Invoice.objects.filter(status__in=['SENT', 'VIEWED', 'PARTIALLY_PAID']).count()
+        total = MediLinkSale.objects.count()
+        paid = MediLinkSale.objects.filter(status=SaleStatus.COMPLETED).count()
+        overdue = 0
+        draft = MediLinkSale.objects.filter(status=SaleStatus.PENDING).count()
+        cancelled = MediLinkSale.objects.filter(status=SaleStatus.CANCELLED).count()
+        pending = MediLinkSale.objects.filter(status=SaleStatus.PENDING).count()
 
-        total_revenue = Invoice.objects.filter(status='PAID').aggregate(t=Sum('total'))['t'] or Decimal('0')
-        outstanding = Invoice.objects.filter(
-            status__in=['SENT', 'VIEWED', 'OVERDUE', 'PARTIALLY_PAID']
-        ).aggregate(t=Sum('total'))['t'] or Decimal('0')
+        total_revenue = MediLinkSale.objects.filter(status=SaleStatus.COMPLETED).aggregate(t=Sum('total_amount'))['t'] or Decimal('0')
+        outstanding = MediLinkSale.objects.filter(status=SaleStatus.PENDING).aggregate(t=Sum('total_amount'))['t'] or Decimal('0')
 
-        this_month_revenue = Invoice.objects.filter(
-            status='PAID',
-            paid_at__year=now.year,
-            paid_at__month=now.month,
-        ).aggregate(t=Sum('total'))['t'] or Decimal('0')
+        this_month_revenue = MediLinkSale.objects.filter(
+            status=SaleStatus.COMPLETED,
+            sale_date__year=now.year,
+            sale_date__month=now.month,
+        ).aggregate(t=Sum('total_amount'))['t'] or Decimal('0')
 
         # Monthly trend (last 6 months)
         six_months_ago = now - timezone.timedelta(days=180)
         monthly = (
-            Invoice.objects
-            .filter(status='PAID', paid_at__gte=six_months_ago)
-            .annotate(month=TruncMonth('paid_at'))
+            MediLinkSale.objects
+            .filter(status=SaleStatus.COMPLETED, sale_date__gte=six_months_ago)
+            .annotate(month=TruncMonth('sale_date'))
             .values('month')
-            .annotate(total=Sum('total'), count=Count('id'))
+            .annotate(total=Sum('total_amount'), count=Count('id'))
             .order_by('month')
         )
 
@@ -120,31 +109,12 @@ class AdminInvoiceViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='cancel')
     def cancel(self, request, pk=None):
-        """POST /api/admin/invoices/{id}/cancel/ -- admin force-cancel an invoice."""
-        from invoices.models import Invoice
-        from admins.services import log_admin_action, get_client_ip
-        from common.enums import AdminActionType
-
-        try:
-            invoice = self.get_object()
-        except Exception:
-            return Response({'error': 'Invoice not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        if invoice.status == 'CANCELLED':
-            return Response({'error': 'Invoice is already cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
-        if invoice.status == 'PAID':
-            return Response({'error': 'Cannot cancel a paid invoice.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        invoice.status = 'CANCELLED'
-        invoice.notes = (invoice.notes or '') + f'\n[Admin cancelled by {request.user.email}]'
-        invoice.save(update_fields=['status', 'notes'])
-
-        log_admin_action(
-            admin=request.user,
-            action=AdminActionType.CONTENT_UPDATE,
-            target_obj=invoice,
-            ip=get_client_ip(request),
-            extra={'action': 'admin_cancel', 'invoice_number': invoice.invoice_number},
-        )
-
-        return Response({'message': 'Invoice cancelled successfully.'})
+        """POST /api/admin/invoices/{id}/cancel/ - cancel a pending income record."""
+        sale = self.get_object()
+        if sale.status == SaleStatus.CANCELLED:
+            return Response({'error': 'Income record is already cancelled.'}, status=400)
+        if sale.status == SaleStatus.COMPLETED:
+            return Response({'error': 'Completed income cannot be cancelled. Use REFUNDED instead.'}, status=400)
+        sale.status = SaleStatus.CANCELLED
+        sale.save(update_fields=['status', 'updated_at'])
+        return Response({'message': 'Income record cancelled successfully.'})

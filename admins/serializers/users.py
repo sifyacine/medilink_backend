@@ -27,9 +27,8 @@ class AdminUserListSerializer(serializers.ModelSerializer):
             'is_active',
             'is_provider',
             'is_patient',
-            'date_joined',
-            'last_login',
             'created_at',
+            'last_login',
         ]
         read_only_fields = fields
 
@@ -69,7 +68,6 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
             'locked_until',
             'last_login',
             'last_login_ip',
-            'date_joined',
             'created_at',
             'updated_at',
             'provider_summary',
