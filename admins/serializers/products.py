@@ -15,6 +15,7 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
     effective_price = serializers.DecimalField(
         max_digits=10, decimal_places=2, read_only=True
     )
+    image_url = serializers.SerializerMethodField()
     profit_margin = serializers.DecimalField(
         max_digits=6, decimal_places=2, read_only=True
     )
@@ -26,6 +27,8 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
             'id',
             'name',
             'sku',
+            'image',
+            'image_url',
             'description',
             'brand',
             'manufacturer',
@@ -48,7 +51,15 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['currency', 'rating', 'rating_count', 'added_by', 'added_by_display', 'updated_by', 'effective_price', 'profit_margin', 'created_at', 'updated_at']
+        read_only_fields = ['currency', 'rating', 'rating_count', 'added_by', 'added_by_display', 'updated_by', 'effective_price', 'profit_margin', 'created_at', 'updated_at', 'image_url']
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.image.url)
+        return obj.image.url
 
     def get_added_by_display(self, obj):
         """Show MediLink for admin-created products, seller info otherwise."""
@@ -89,6 +100,7 @@ class MediLinkProductListSerializer(serializers.ModelSerializer):
     effective_price = serializers.DecimalField(
         max_digits=10, decimal_places=2, read_only=True
     )
+    image_url = serializers.SerializerMethodField()
     is_low_stock = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -97,6 +109,7 @@ class MediLinkProductListSerializer(serializers.ModelSerializer):
             'id',
             'name',
             'sku',
+            'image_url',
             'category',
             'currency',
             'selling_price',
@@ -112,6 +125,14 @@ class MediLinkProductListSerializer(serializers.ModelSerializer):
             'added_by_display',
             'created_at',
         ]
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.image.url)
+        return obj.image.url
 
     def get_added_by_display(self, obj):
         if obj.added_by is None or getattr(obj.added_by, 'role', None) == 'ADMIN':

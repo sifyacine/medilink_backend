@@ -40,6 +40,7 @@ class MediLinkProduct(models.Model):
     """
     name = models.CharField(max_length=255)
     sku = models.CharField(max_length=64, unique=True, null=True, blank=True)
+    image = models.ImageField(upload_to='products/', null=True, blank=True)
     description = models.TextField(blank=True)
     brand = models.CharField(max_length=100, blank=True)
     manufacturer = models.CharField(max_length=120, blank=True)
