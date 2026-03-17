@@ -18,7 +18,7 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
     profit_margin = serializers.DecimalField(
         max_digits=6, decimal_places=2, read_only=True
     )
-    rating = serializers.DecimalField(max_digits=3, decimal_places=2, min_value=Decimal('0'), max_value=Decimal('5'))
+    rating = serializers.DecimalField(max_digits=3, decimal_places=2, read_only=True)
 
     class Meta:
         model = MediLinkProduct
@@ -48,7 +48,7 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['currency', 'added_by', 'added_by_display', 'updated_by', 'effective_price', 'profit_margin', 'created_at', 'updated_at']
+        read_only_fields = ['currency', 'rating', 'rating_count', 'added_by', 'added_by_display', 'updated_by', 'effective_price', 'profit_margin', 'created_at', 'updated_at']
 
     def get_added_by_display(self, obj):
         """Show MediLink for admin-created products, seller info otherwise."""
@@ -60,15 +60,12 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
         """Ensure discount_value is set when discount_type is provided."""
         discount_type = data.get('discount_type', getattr(self.instance, 'discount_type', ''))
         discount_value = data.get('discount_value', getattr(self.instance, 'discount_value', Decimal('0')))
-        rating = data.get('rating', getattr(self.instance, 'rating', Decimal('0')))
         if discount_type and (discount_value is None or discount_value <= 0):
             raise serializers.ValidationError(
                 {'discount_value': 'A positive discount value is required when a discount type is set.'}
             )
         if discount_type == 'PERCENTAGE' and discount_value > 100:
             raise serializers.ValidationError({'discount_value': 'Percentage discount cannot exceed 100.'})
-        if rating is not None and (rating < 0 or rating > 5):
-            raise serializers.ValidationError({'rating': 'Rating must be between 0 and 5.'})
         return data
 
     def create(self, validated_data):
