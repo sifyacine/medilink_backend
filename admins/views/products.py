@@ -26,7 +26,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from admins.models.products import MediLinkProduct, MediLinkSale, SaleStatus
-from admins.permissions import IsAdmin
+from admins.permissions import IsAdmin, IsAdminOrSeller
 from admins.serializers.products import (
     MediLinkProductSerializer,
     MediLinkProductListSerializer,
@@ -39,14 +39,14 @@ class MediLinkProductViewSet(viewsets.ModelViewSet):
     Full CRUD for MediLink platform products.
     Only accessible by MediLink admins.
     """
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [IsAuthenticated, IsAdminOrSeller]
     filter_backends = [SearchFilter, OrderingFilter]
-    search_fields = ['name', 'description', 'category']
-    ordering_fields = ['name', 'selling_price', 'cost_price', 'rating', 'created_at']
+    search_fields = ['name', 'sku', 'brand', 'manufacturer', 'description', 'category']
+    ordering_fields = ['name', 'selling_price', 'cost_price', 'rating', 'stock_quantity', 'created_at']
     ordering = ['-created_at']
 
     def get_queryset(self):
-        qs = MediLinkProduct.objects.select_related('added_by')
+        qs = MediLinkProduct.objects.select_related('added_by', 'updated_by')
 
         category = self.request.query_params.get('category')
         is_active = self.request.query_params.get('is_active')

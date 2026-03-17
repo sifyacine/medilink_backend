@@ -39,7 +39,10 @@ class MediLinkProduct(models.Model):
     Examples: provider subscription plans, medical supplies, digital products.
     """
     name = models.CharField(max_length=255)
+    sku = models.CharField(max_length=64, unique=True, null=True, blank=True)
     description = models.TextField(blank=True)
+    brand = models.CharField(max_length=100, blank=True)
+    manufacturer = models.CharField(max_length=120, blank=True)
     category = models.CharField(
         max_length=30,
         choices=ProductCategory.choices,
@@ -57,6 +60,10 @@ class MediLinkProduct(models.Model):
         validators=[MinValueValidator(Decimal('0'))],
         help_text='Price shown to buyers',
     )
+    currency = models.CharField(max_length=3, default='DZD', editable=False)
+
+    stock_quantity = models.PositiveIntegerField(default=0)
+    low_stock_threshold = models.PositiveIntegerField(default=5)
 
     # Discount
     discount_type = models.CharField(
@@ -85,7 +92,14 @@ class MediLinkProduct(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         related_name='medilink_products',
-        help_text='Admin who created this product (shown as MediLink in UI)',
+        help_text='User who created this product (admin or seller).',
+    )
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='updated_medilink_products',
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -97,6 +111,13 @@ class MediLinkProduct(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        # Currency is platform-standardized to DZD for this module.
+        self.currency = 'DZD'
+        if not self.discount_type:
+            self.discount_value = Decimal('0')
+        super().save(*args, **kwargs)
 
     @property
     def effective_price(self):
@@ -115,6 +136,10 @@ class MediLinkProduct(models.Model):
         if ep <= 0:
             return Decimal('0')
         return ((ep - self.cost_price) / ep * 100).quantize(Decimal('0.01'))
+
+    @property
+    def is_low_stock(self):
+        return self.stock_quantity <= self.low_stock_threshold
 
 
 class MediLinkSale(models.Model):

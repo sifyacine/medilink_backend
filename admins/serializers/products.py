@@ -18,18 +18,25 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
     profit_margin = serializers.DecimalField(
         max_digits=6, decimal_places=2, read_only=True
     )
+    rating = serializers.DecimalField(max_digits=3, decimal_places=2, min_value=Decimal('0'), max_value=Decimal('5'))
 
     class Meta:
         model = MediLinkProduct
         fields = [
             'id',
             'name',
+            'sku',
             'description',
+            'brand',
+            'manufacturer',
             'category',
             'cost_price',
             'selling_price',
+            'currency',
             'discount_type',
             'discount_value',
+            'stock_quantity',
+            'low_stock_threshold',
             'effective_price',
             'profit_margin',
             'rating',
@@ -37,32 +44,45 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
             'is_active',
             'added_by',
             'added_by_display',
+            'updated_by',
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['added_by', 'added_by_display', 'effective_price', 'profit_margin', 'created_at', 'updated_at']
+        read_only_fields = ['currency', 'added_by', 'added_by_display', 'updated_by', 'effective_price', 'profit_margin', 'created_at', 'updated_at']
 
     def get_added_by_display(self, obj):
-        """Always show 'MediLink' for admin-added products."""
-        if obj.added_by is None:
+        """Show MediLink for admin-created products, seller info otherwise."""
+        if obj.added_by is None or getattr(obj.added_by, 'role', None) == 'ADMIN':
             return 'MediLink'
-        return 'MediLink'  # All admin-added products are attributed to MediLink
+        return obj.added_by.get_full_name() or obj.added_by.email
 
     def validate(self, data):
         """Ensure discount_value is set when discount_type is provided."""
         discount_type = data.get('discount_type', getattr(self.instance, 'discount_type', ''))
         discount_value = data.get('discount_value', getattr(self.instance, 'discount_value', Decimal('0')))
+        rating = data.get('rating', getattr(self.instance, 'rating', Decimal('0')))
         if discount_type and (discount_value is None or discount_value <= 0):
             raise serializers.ValidationError(
                 {'discount_value': 'A positive discount value is required when a discount type is set.'}
             )
+        if discount_type == 'PERCENTAGE' and discount_value > 100:
+            raise serializers.ValidationError({'discount_value': 'Percentage discount cannot exceed 100.'})
+        if rating is not None and (rating < 0 or rating > 5):
+            raise serializers.ValidationError({'rating': 'Rating must be between 0 and 5.'})
         return data
 
     def create(self, validated_data):
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             validated_data['added_by'] = request.user
+            validated_data['updated_by'] = request.user
         return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            validated_data['updated_by'] = request.user
+        return super().update(instance, validated_data)
 
 
 class MediLinkProductListSerializer(serializers.ModelSerializer):
@@ -72,17 +92,23 @@ class MediLinkProductListSerializer(serializers.ModelSerializer):
     effective_price = serializers.DecimalField(
         max_digits=10, decimal_places=2, read_only=True
     )
+    is_low_stock = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = MediLinkProduct
         fields = [
             'id',
             'name',
+            'sku',
             'category',
+            'currency',
             'selling_price',
             'discount_type',
             'discount_value',
             'effective_price',
+            'stock_quantity',
+            'low_stock_threshold',
+            'is_low_stock',
             'rating',
             'rating_count',
             'is_active',
@@ -91,7 +117,9 @@ class MediLinkProductListSerializer(serializers.ModelSerializer):
         ]
 
     def get_added_by_display(self, obj):
-        return 'MediLink'
+        if obj.added_by is None or getattr(obj.added_by, 'role', None) == 'ADMIN':
+            return 'MediLink'
+        return obj.added_by.get_full_name() or obj.added_by.email
 
 
 class MediLinkSaleSerializer(serializers.ModelSerializer):
