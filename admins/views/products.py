@@ -46,7 +46,7 @@ class MediLinkProductViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        qs = MediLinkProduct.objects.select_related('added_by', 'updated_by')
+        qs = MediLinkProduct.objects.select_related('added_by', 'updated_by').prefetch_related('gallery_images')
 
         category = self.request.query_params.get('category')
         is_active = self.request.query_params.get('is_active')

@@ -143,6 +143,28 @@ class MediLinkProduct(models.Model):
         return self.stock_quantity <= self.low_stock_threshold
 
 
+class MediLinkProductImage(models.Model):
+    """Additional gallery images for a MediLink product."""
+
+    product = models.ForeignKey(
+        MediLinkProduct,
+        on_delete=models.CASCADE,
+        related_name='gallery_images',
+    )
+    image = models.ImageField(upload_to='products/gallery/')
+    alt_text = models.CharField(max_length=255, blank=True)
+    display_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['display_order', 'id']
+        verbose_name = 'MediLink Product Image'
+        verbose_name_plural = 'MediLink Product Images'
+
+    def __str__(self):
+        return f'Image #{self.pk} for {self.product.name}'
+
+
 class MediLinkSale(models.Model):
     """
     Records a single income event for MediLink.

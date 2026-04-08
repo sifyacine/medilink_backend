@@ -37,8 +37,22 @@ class AdminActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated, IsAdmin]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['action', 'admin']
+    filterset_fields = ['admin']
     search_fields = ['object_repr', 'admin__email']
     ordering_fields = ['created_at']
     ordering = ['-created_at']
+
+    def get_queryset(self):
+        qs = self.queryset
+        action = self.request.query_params.get('action')
+        date_from = self.request.query_params.get('date_from')
+        date_to = self.request.query_params.get('date_to')
+
+        if action:
+            qs = qs.filter(action__icontains=action)
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+        return qs
 

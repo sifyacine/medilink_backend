@@ -5,7 +5,24 @@ from decimal import Decimal
 
 from rest_framework import serializers
 
-from admins.models.products import MediLinkProduct, MediLinkSale
+from admins.models.products import MediLinkProduct, MediLinkProductImage, MediLinkSale
+
+
+class MediLinkProductImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MediLinkProductImage
+        fields = ['id', 'image', 'image_url', 'alt_text', 'display_order', 'created_at']
+        read_only_fields = ['created_at', 'image_url']
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.image.url)
+        return obj.image.url
 
 
 class MediLinkProductSerializer(serializers.ModelSerializer):
@@ -16,6 +33,7 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
         max_digits=10, decimal_places=2, read_only=True
     )
     image_url = serializers.SerializerMethodField()
+    gallery_images = MediLinkProductImageSerializer(many=True, read_only=True)
     profit_margin = serializers.DecimalField(
         max_digits=6, decimal_places=2, read_only=True
     )
@@ -29,6 +47,7 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
             'sku',
             'image',
             'image_url',
+            'gallery_images',
             'description',
             'brand',
             'manufacturer',
@@ -51,15 +70,36 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['currency', 'rating', 'rating_count', 'added_by', 'added_by_display', 'updated_by', 'effective_price', 'profit_margin', 'created_at', 'updated_at', 'image_url']
+        read_only_fields = ['currency', 'rating', 'rating_count', 'added_by', 'added_by_display', 'updated_by', 'effective_price', 'profit_margin', 'created_at', 'updated_at', 'image_url', 'gallery_images']
 
     def get_image_url(self, obj):
         if not obj.image:
-            return None
+            first_gallery = obj.gallery_images.first()
+            if not first_gallery or not first_gallery.image:
+                return None
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(first_gallery.image.url)
+            return first_gallery.image.url
         request = self.context.get('request')
         if request:
             return request.build_absolute_uri(obj.image.url)
         return obj.image.url
+
+    def _create_gallery_images(self, product):
+        request = self.context.get('request')
+        if not request:
+            return
+        files = request.FILES.getlist('images')
+        if not files:
+            return
+        start_order = product.gallery_images.count()
+        for idx, file_obj in enumerate(files):
+            MediLinkProductImage.objects.create(
+                product=product,
+                image=file_obj,
+                display_order=start_order + idx,
+            )
 
     def get_added_by_display(self, obj):
         """Show MediLink for admin-created products, seller info otherwise."""
@@ -84,13 +124,25 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated:
             validated_data['added_by'] = request.user
             validated_data['updated_by'] = request.user
-        return super().create(validated_data)
+        product = super().create(validated_data)
+        self._create_gallery_images(product)
+        return product
 
     def update(self, instance, validated_data):
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             validated_data['updated_by'] = request.user
-        return super().update(instance, validated_data)
+        product = super().update(instance, validated_data)
+
+        # Optional cleanup of gallery images via remove_image_ids[]=1&remove_image_ids[]=2
+        remove_ids = []
+        if request:
+            remove_ids = request.data.getlist('remove_image_ids')
+        if remove_ids:
+            product.gallery_images.filter(id__in=remove_ids).delete()
+
+        self._create_gallery_images(product)
+        return product
 
 
 class MediLinkProductListSerializer(serializers.ModelSerializer):
@@ -101,6 +153,7 @@ class MediLinkProductListSerializer(serializers.ModelSerializer):
         max_digits=10, decimal_places=2, read_only=True
     )
     image_url = serializers.SerializerMethodField()
+    gallery_images = MediLinkProductImageSerializer(many=True, read_only=True)
     is_low_stock = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -110,8 +163,13 @@ class MediLinkProductListSerializer(serializers.ModelSerializer):
             'name',
             'sku',
             'image_url',
+            'gallery_images',
+            'description',
+            'brand',
+            'manufacturer',
             'category',
             'currency',
+            'cost_price',
             'selling_price',
             'discount_type',
             'discount_value',
@@ -128,7 +186,13 @@ class MediLinkProductListSerializer(serializers.ModelSerializer):
 
     def get_image_url(self, obj):
         if not obj.image:
-            return None
+            first_gallery = obj.gallery_images.first()
+            if not first_gallery or not first_gallery.image:
+                return None
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(first_gallery.image.url)
+            return first_gallery.image.url
         request = self.context.get('request')
         if request:
             return request.build_absolute_uri(obj.image.url)

@@ -4,7 +4,7 @@ from django.utils.html import format_html
 
 from admins.models.admin_profile import AdminProfile
 from admins.models.activity_log import AdminActivityLog
-from admins.models.products import MediLinkProduct, MediLinkSale
+from admins.models.products import MediLinkProduct, MediLinkProductImage, MediLinkSale
 
 
 @admin.register(AdminProfile)
@@ -139,3 +139,11 @@ class MediLinkSaleAdmin(admin.ModelAdmin):
     search_fields = ['product__name', 'buyer__email', 'reference']
     readonly_fields = ['sale_date', 'updated_at']
     ordering = ['-sale_date']
+
+
+@admin.register(MediLinkProductImage)
+class MediLinkProductImageAdmin(admin.ModelAdmin):
+    list_display = ['product', 'display_order', 'created_at']
+    list_filter = ['product']
+    search_fields = ['product__name', 'alt_text']
+    ordering = ['product__name', 'display_order']
