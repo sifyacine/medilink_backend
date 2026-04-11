@@ -194,7 +194,5 @@ class NurseServiceViewSet(viewsets.ModelViewSet):
             serializer.save(nurse=nurse)
         except AttributeError:
             raise serializers.ValidationError({'detail': 'Nurse profile not found.'})
-        except AttributeError:
-            raise serializers.ValidationError('Nurse profile not found.')
         except Exception as e:
-            raise serializers.ValidationError(f'Error assigning service: {str(e)}')
+            raise serializers.ValidationError({'detail': f'Error assigning service: {str(e)}'})

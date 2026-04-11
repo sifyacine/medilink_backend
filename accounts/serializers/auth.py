@@ -54,104 +54,11 @@ class PatientRegisterSerializer(serializers.Serializer):
         return cleaned
     
     def validate(self, attrs):
-        """Validate password confirmation and per-type required fields."""
+        """Validate password confirmation."""
         if attrs['password'] != attrs['password_confirm']:
             raise serializers.ValidationError({
                 'password_confirm': 'Passwords do not match.'
             })
-
-        provider_type = attrs.get('provider_type')
-
-        # Per-role minimal required professional info at signup
-        # Doctor: normal identity + license and degree document
-        if provider_type == 'DOCTOR':
-            required_fields = [
-                'first_name',
-                'last_name',
-                'phone_number',
-                'license_number',
-                'degree_document',
-            ]
-            errors = {}
-            for field in required_fields:
-                if not attrs.get(field):
-                    errors[field] = 'This field is required for doctor signup.'
-            if errors:
-                raise serializers.ValidationError(errors)
-
-        # Nurse: degree + entrepreneur card front/back as a start
-        elif provider_type == 'NURSE':
-            required_fields = [
-                'first_name',
-                'last_name',
-                'phone_number',
-                'license_number',
-                'degree_document',
-                'entrepreneur_card_front',
-                'entrepreneur_card_back',
-            ]
-            errors = {}
-            for field in required_fields:
-                if not attrs.get(field):
-                    errors[field] = 'This field is required for nurse signup.'
-            if errors:
-                raise serializers.ValidationError(errors)
-
-        # Clinic: license number and basic clinic info
-        elif provider_type == 'CLINIC':
-            required_fields = [
-                'clinic_name',
-                'license_number',
-                'phone_number',
-            ]
-            errors = {}
-            for field in required_fields:
-                if not attrs.get(field):
-                    errors[field] = 'This field is required for clinic signup.'
-            if errors:
-                raise serializers.ValidationError(errors)
-
-        # Laboratory: license number and basic lab info
-        elif provider_type == 'LABORATORY':
-            required_fields = [
-                'lab_name',
-                'license_number',
-                'phone_number',
-            ]
-            errors = {}
-            for field in required_fields:
-                if not attrs.get(field):
-                    errors[field] = 'This field is required for laboratory signup.'
-            if errors:
-                raise serializers.ValidationError(errors)
-
-        # VTC: license number and basic company info
-        elif provider_type == 'VTC':
-            required_fields = [
-                'company_name',
-                'license_number',
-                'phone_number',
-            ]
-            errors = {}
-            for field in required_fields:
-                if not attrs.get(field):
-                    errors[field] = 'This field is required for VTC signup.'
-            if errors:
-                raise serializers.ValidationError(errors)
-
-        # Seller/Pharmacy: basic business identity
-        elif provider_type == 'SELLER':
-            required_fields = [
-                'business_name',
-                'phone_number',
-                'tax_id',
-            ]
-            errors = {}
-            for field in required_fields:
-                if not attrs.get(field):
-                    errors[field] = 'This field is required for seller signup.'
-            if errors:
-                raise serializers.ValidationError(errors)
 
         return attrs
     
@@ -208,8 +115,9 @@ class ProviderRegisterSerializer(serializers.Serializer):
     degree_document = serializers.FileField(required=False, allow_null=True)
     
     # Nurse-specific Fields
-    entrepreneur_card_front = serializers.ImageField(required=False, allow_null=True)
-    entrepreneur_card_back = serializers.ImageField(required=False, allow_null=True)
+    entrepreneur_card_front = serializers.FileField(required=False, allow_null=True)
+    entrepreneur_card_back = serializers.FileField(required=False, allow_null=True)
+    entrepreneur_card_pdf = serializers.FileField(required=False, allow_null=True)
     
     # Clinic/Lab/VTC/Seller Specific
     clinic_name = serializers.CharField(required=False, allow_blank=True)
@@ -237,6 +145,13 @@ class ProviderRegisterSerializer(serializers.Serializer):
         except User.DoesNotExist:
             pass  # New user - OK
         return value_lower
+
+    def validate_phone_number(self, value):
+        """Validate phone number format."""
+        cleaned = value.replace(' ', '').replace('-', '')
+        if len(cleaned) < 8:
+            raise serializers.ValidationError('Phone number is too short.')
+        return cleaned
     
     def validate(self, attrs):
         """Validate password confirmation."""
@@ -244,6 +159,91 @@ class ProviderRegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 'password_confirm': 'Passwords do not match.'
             })
+
+        provider_type = attrs.get('provider_type')
+
+        if provider_type == 'DOCTOR':
+            required_fields = [
+                'first_name',
+                'last_name',
+                'phone_number',
+                'license_number',
+                'degree_document',
+            ]
+            errors = {}
+            for field in required_fields:
+                if not attrs.get(field):
+                    errors[field] = 'This field is required for doctor signup.'
+            if errors:
+                raise serializers.ValidationError(errors)
+
+        elif provider_type == 'NURSE':
+            required_fields = [
+                'first_name',
+                'last_name',
+                'phone_number',
+                'degree_document',
+                'entrepreneur_card_front',
+                'entrepreneur_card_back',
+            ]
+            errors = {}
+            for field in required_fields:
+                if not attrs.get(field):
+                    errors[field] = 'This field is required for nurse signup.'
+            if errors:
+                raise serializers.ValidationError(errors)
+
+        elif provider_type == 'CLINIC':
+            required_fields = [
+                'clinic_name',
+                'license_number',
+                'phone_number',
+            ]
+            errors = {}
+            for field in required_fields:
+                if not attrs.get(field):
+                    errors[field] = 'This field is required for clinic signup.'
+            if errors:
+                raise serializers.ValidationError(errors)
+
+        elif provider_type == 'LABORATORY':
+            required_fields = [
+                'lab_name',
+                'license_number',
+                'phone_number',
+            ]
+            errors = {}
+            for field in required_fields:
+                if not attrs.get(field):
+                    errors[field] = 'This field is required for laboratory signup.'
+            if errors:
+                raise serializers.ValidationError(errors)
+
+        elif provider_type == 'VTC':
+            required_fields = [
+                'company_name',
+                'license_number',
+                'phone_number',
+            ]
+            errors = {}
+            for field in required_fields:
+                if not attrs.get(field):
+                    errors[field] = 'This field is required for VTC signup.'
+            if errors:
+                raise serializers.ValidationError(errors)
+
+        elif provider_type == 'SELLER':
+            required_fields = [
+                'business_name',
+                'phone_number',
+                'tax_id',
+            ]
+            errors = {}
+            for field in required_fields:
+                if not attrs.get(field):
+                    errors[field] = 'This field is required for seller signup.'
+            if errors:
+                raise serializers.ValidationError(errors)
         return attrs
 
 

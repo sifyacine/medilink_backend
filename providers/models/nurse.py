@@ -3,6 +3,7 @@ Comprehensive Nurse model for healthcare marketplace.
 """
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.validators import FileExtensionValidator
 from django.utils import timezone
 
 from providers.models.provider import Provider
@@ -84,26 +85,30 @@ class Nurse(models.Model):
         upload_to='nurses/documents/degrees/',
         null=True,
         blank=True,
+        validators=[FileExtensionValidator(['pdf', 'png', 'jpg', 'jpeg', 'webp'])],
         help_text='Nursing degree document (PDF or image)'
     )
     
     # Entrepreneur Card (Required for Nurses)
-    entrepreneur_card_front = models.ImageField(
+    entrepreneur_card_front = models.FileField(
         upload_to='nurses/documents/entrepreneur_cards/',
         null=True,
         blank=True,
-        help_text='Entrepreneur card front image'
+        validators=[FileExtensionValidator(['pdf', 'png', 'jpg', 'jpeg', 'webp'])],
+        help_text='Entrepreneur card front file (PDF or image)'
     )
-    entrepreneur_card_back = models.ImageField(
+    entrepreneur_card_back = models.FileField(
         upload_to='nurses/documents/entrepreneur_cards/',
         null=True,
         blank=True,
-        help_text='Entrepreneur card back image'
+        validators=[FileExtensionValidator(['pdf', 'png', 'jpg', 'jpeg', 'webp'])],
+        help_text='Entrepreneur card back file (PDF or image)'
     )
     entrepreneur_card_pdf = models.FileField(
         upload_to='nurses/documents/entrepreneur_cards/',
         null=True,
         blank=True,
+        validators=[FileExtensionValidator(['pdf', 'png', 'jpg', 'jpeg', 'webp'])],
         help_text='Entrepreneur card PDF version'
     )
     
@@ -144,6 +149,10 @@ class Nurse(models.Model):
     def __str__(self):
         return f'Nurse {self.first_name} {self.last_name}'
     
+    def get_full_name(self):
+        """Return full name for serializer compatibility."""
+        return self.full_name
+
     @property
     def full_name(self):
         """Return full name."""
