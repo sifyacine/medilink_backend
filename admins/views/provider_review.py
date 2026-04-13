@@ -61,12 +61,12 @@ class AdminProviderViewSet(viewsets.ReadOnlyModelViewSet):
     def verify(self, request, pk=None):
         """
         Verify a provider.
-        
+
         POST /api/admin/providers/{id}/verify/
-        
+
         Headers:
         Authorization: Token abc123...
-        
+
         Response:
         {
             "message": "Provider verified successfully.",
@@ -80,16 +80,55 @@ class AdminProviderViewSet(viewsets.ReadOnlyModelViewSet):
         }
         """
         provider = self.get_object()
-        
+
         if provider.status == ProviderStatus.VERIFIED:
             return Response(
                 {'error': 'Provider is already verified.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         approve_provider(provider, request.user)
         provider.refresh_from_db()
-        
+
+        serializer = ProviderDetailSerializer(provider)
+        return Response({
+            'message': 'Provider approved successfully.',
+            'provider': serializer.data,
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """
+        Approve a provider.
+
+        POST /api/admin/providers/{id}/approve/
+
+        Headers:
+        Authorization: Token abc123...
+
+        Response:
+        {
+            "message": "Provider approved successfully.",
+            "provider": {
+                "id": 1,
+                "email": "doctor@example.com",
+                "status": "APPROVED",
+                "approved_at": "2026-01-26T10:00:00Z",
+                ...
+            }
+        }
+        """
+        provider = self.get_object()
+
+        if provider.status == ProviderStatus.APPROVED:
+            return Response(
+                {'error': 'Provider is already approved.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        approve_provider(provider, request.user)
+        provider.refresh_from_db()
+
         serializer = ProviderDetailSerializer(provider)
         return Response({
             'message': 'Provider approved successfully.',

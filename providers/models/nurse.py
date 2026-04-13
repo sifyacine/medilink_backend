@@ -125,6 +125,12 @@ class Nurse(models.Model):
         default=True,
         help_text='Whether nurse provides home visits (common for nurses)'
     )
+
+    # Service Area (for filtering nurse requests by location)
+    service_area_km = models.PositiveIntegerField(
+        default=50,
+        help_text='Maximum distance in kilometers that nurse can travel for service requests (default: 50km)'
+    )
     
     # Timestamps
     created_at = models.DateTimeField(

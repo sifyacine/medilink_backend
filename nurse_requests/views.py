@@ -1001,27 +1001,69 @@ class NurseAvailableRequestsViewSet(viewsets.ReadOnlyModelViewSet):
         except Exception:
             return None
     
+    def _calculate_distance(self, lat1, lon1, lat2, lon2):
+        """
+        Calculate distance between two points using Haversine formula.
+        Returns distance in kilometers.
+
+        Args:
+            lat1, lon1: Nurse location (Decimal)
+            lat2, lon2: Request location (Decimal)
+
+        Returns:
+            Distance in kilometers (float)
+        """
+        from math import radians, sin, cos, sqrt, atan2
+        from decimal import Decimal
+
+        # Convert to float if Decimal
+        lat1 = float(lat1)
+        lon1 = float(lon1)
+        lat2 = float(lat2)
+        lon2 = float(lon2)
+
+        # Earth's radius in kilometers
+        R = 6371.0
+
+        # Convert to radians
+        lat1_rad = radians(lat1)
+        lon1_rad = radians(lon1)
+        lat2_rad = radians(lat2)
+        lon2_rad = radians(lon2)
+
+        # Differences
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
+
+        # Haversine formula
+        a = sin(dlat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2) ** 2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        distance = R * c
+
+        return distance
+
     def get_queryset(self):
         """
         Return requests in SEARCHING or NURSE_RESPONDED status
         that the nurse hasn't already responded to AND
-        that match services in the nurse's profile.
+        that match services in the nurse's profile AND
+        are within the nurse's service area.
         """
         nurse = self._get_nurse(self.request)
-        
+
         if not nurse:
             return NurseServiceRequest.objects.none()
-        
+
         # Get service IDs that the nurse has in their profile and is available for
         nurse_service_ids = NurseService.objects.filter(
             nurse=nurse,
             is_available=True
         ).values_list('service_id', flat=True)
-        
+
         # If nurse has no services, return empty queryset
         if not nurse_service_ids:
             return NurseServiceRequest.objects.none()
-        
+
         # Get requests that match nurse's services
         queryset = NurseServiceRequest.objects.filter(
             status__in=[RequestStatus.SEARCHING, RequestStatus.NURSE_RESPONDED],
@@ -1031,12 +1073,53 @@ class NurseAvailableRequestsViewSet(viewsets.ReadOnlyModelViewSet):
         ).select_related(
             'service', 'patient_user'
         ).order_by('-created_at')
-        
+
+        # Filter by area/distance if nurse has a location set
+        nurse_provider = nurse.provider
+        nurse_user = nurse_provider.user
+
+        # Try to get nurse's primary work address
+        try:
+            from django.contrib.contenttypes.models import ContentType
+            from address.models import Address
+
+            nurse_address = Address.objects.get(
+                content_type=ContentType.objects.get_for_model(nurse_user),
+                object_id=nurse_user.id,
+                address_type__in=['WORK', 'CLINIC'],
+                is_primary=True
+            )
+
+            if nurse_address.latitude and nurse_address.longitude:
+                # Filter requests by distance
+                service_area_km = nurse.service_area_km or 50  # Default 50km
+                filtered_requests = []
+
+                for request_obj in queryset:
+                    if request_obj.latitude and request_obj.longitude:
+                        distance = self._calculate_distance(
+                            nurse_address.latitude,
+                            nurse_address.longitude,
+                            request_obj.latitude,
+                            request_obj.longitude
+                        )
+
+                        # Only include requests within service area
+                        if distance <= service_area_km:
+                            filtered_requests.append(request_obj.id)
+
+                # Filter queryset to include only requests within service area
+                queryset = queryset.filter(id__in=filtered_requests)
+        except Exception:
+            # If nurse doesn't have a location set, include all requests
+            # User can still filter by city parameter
+            pass
+
         # Optional: Filter by city if nurse has set a preferred city
         city = self.request.query_params.get('city')
         if city:
             queryset = queryset.filter(city__icontains=city)
-        
+
         return queryset
     
     def list(self, request, *args, **kwargs):

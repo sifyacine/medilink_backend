@@ -66,6 +66,7 @@ class NurseSerializer(serializers.ModelSerializer):
             'is_verified',
             'is_available',
             'is_home_service_available',
+            'service_area_km',
             'services',
             'provider_status',
             'created_at',
