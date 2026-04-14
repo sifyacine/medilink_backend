@@ -10,7 +10,7 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-from django.db.models import Q
+from django.db.models import Q, Max
 from django.shortcuts import get_object_or_404
 
 from .models import Prescription, PrescriptionItem, PrescriptionStatus, MedicationType, DosageFrequency
@@ -28,6 +28,7 @@ from .permissions import (
     IsPrescriptionDoctor,
     CanViewPrescription,
     CanModifyPrescription,
+    get_doctor_from_user,
 )
 
 
@@ -68,9 +69,14 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
             permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
         elif self.action in ['update', 'partial_update', 'destroy']:
             permission_classes = [permissions.IsAuthenticated, CanModifyPrescription]
-        elif self.action in ['upload_pdf', 'issue', 'cancel', 'add_item']:
+        elif self.action in ['upload_pdf', 'issue', 'cancel']:
             permission_classes = [permissions.IsAuthenticated, IsPrescriptionDoctor]
-        elif self.action in ['retrieve', 'list', 'items']:
+        elif self.action == 'items':
+            if self.request.method == 'POST':
+                permission_classes = [permissions.IsAuthenticated, IsPrescriptionDoctor]
+            else:
+                permission_classes = [permissions.IsAuthenticated, CanViewPrescription]
+        elif self.action in ['retrieve', 'list']:
             permission_classes = [permissions.IsAuthenticated, CanViewPrescription]
         else:
             permission_classes = [permissions.IsAuthenticated]
@@ -213,9 +219,7 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         # Get next order
-        max_order = prescription.items.aggregate(
-            max_order=models.Max('order')
-        )['max_order'] or 0
+        max_order = prescription.items.aggregate(max_order=Max('order'))['max_order'] or 0
         
         item = PrescriptionItem.objects.create(
             prescription=prescription,
@@ -429,19 +433,40 @@ class PrescriptionItemViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         """Only allow creating items on draft prescriptions."""
-        serializer = self.get_serializer(data=request.data)
+        prescription_id = request.data.get('prescription')
+        if not prescription_id:
+            return Response(
+                {'prescription': ['This field is required.']},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        prescription = get_object_or_404(Prescription, pk=prescription_id)
+
+        if prescription.status != PrescriptionStatus.DRAFT:
+            return Response(
+                {'error': 'Can only add items to draft prescriptions.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = request.user
+        if not (user.is_staff or user.is_superuser):
+            doctor = get_doctor_from_user(user)
+            if not doctor or prescription.doctor != doctor:
+                return Response(
+                    {'error': 'You can only add items to your own prescriptions.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        item_payload = request.data.copy()
+        item_payload.pop('prescription', None)
+        serializer = self.get_serializer(data=item_payload)
         serializer.is_valid(raise_exception=True)
 
-        prescription_id = request.data.get('prescription')
-        if prescription_id:
-            try:
-                prescription = Prescription.objects.get(pk=prescription_id)
-                if prescription.status != PrescriptionStatus.DRAFT:
-                    return Response(
-                        {'error': 'Can only add items to draft prescriptions.'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-            except Prescription.DoesNotExist:
-                pass
+        max_order = prescription.items.aggregate(max_order=Max('order'))['max_order'] or 0
+        item = PrescriptionItem.objects.create(
+            prescription=prescription,
+            order=serializer.validated_data.get('order', max_order + 1),
+            **serializer.validated_data
+        )
 
-        return super().create(request, *args, **kwargs)
+        return Response(PrescriptionItemSerializer(item).data, status=status.HTTP_201_CREATED)
