@@ -101,7 +101,9 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         # Patient sees their appointments
         else:
             queryset = queryset.filter(
-                Q(patient_user=user) | Q(created_by=user)
+                Q(patient_user=user) | 
+                Q(patient_record__linked_user=user) |
+                Q(created_by=user)
             )
         
         # Apply filters

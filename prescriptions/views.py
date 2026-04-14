@@ -122,7 +122,7 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
         # Patient sees their own prescriptions
         return queryset.filter(
             Q(patient=user) |
-            Q(patient_record__user=user)
+            Q(patient_record__linked_user=user)
         )
     
     @action(detail=True, methods=['post'], url_path='upload-pdf',
@@ -247,7 +247,7 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
         
         queryset = Prescription.objects.filter(
             Q(patient=user) |
-            Q(patient_record__user=user)
+            Q(patient_record__linked_user=user)
         ).select_related(
             'doctor', 'clinic', 'appointment'
         ).prefetch_related('items')
@@ -316,7 +316,8 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
         if patient_id:
             queryset = queryset.filter(
                 Q(patient_id=patient_id) |
-                Q(patient_record_id=patient_id)
+                Q(patient_record_id=patient_id) |
+                Q(patient_record__linked_user_id=patient_id)
             )
         
         # Filter by date range
@@ -404,7 +405,7 @@ class PrescriptionItemViewSet(viewsets.ModelViewSet):
         # Patient sees their items
         return PrescriptionItem.objects.filter(
             Q(prescription__patient=user) |
-            Q(prescription__patient_record__user=user)
+            Q(prescription__patient_record__linked_user=user)
         )
     
     def destroy(self, request, *args, **kwargs):

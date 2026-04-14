@@ -189,7 +189,8 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
         - is_history: Filter historical requests (COMPLETED, CANCELLED)
         """
         queryset = NurseServiceRequest.objects.filter(
-            patient_user=self.request.user
+            Q(patient_user=self.request.user) |
+            Q(patient_record__linked_user=self.request.user)
         ).select_related(
             'service', 'patient_user', 'patient_record', 'accepted_nurse__user'
         ).prefetch_related(
