@@ -110,23 +110,24 @@ class MedicalRecordListSerializer(serializers.ModelSerializer):
     has_allergy = serializers.SerializerMethodField()
     attachment_count = serializers.SerializerMethodField()
     note_count = serializers.SerializerMethodField()
-    
+    severity_display = serializers.CharField(source='get_severity_level_display', read_only=True)
+
     def get_has_prescription(self, obj):
         """Check if record has prescription."""
         return hasattr(obj, 'prescription')
-    
+
     def get_has_allergy(self, obj):
         """Check if record has allergy."""
         return hasattr(obj, 'allergy')
-    
+
     def get_attachment_count(self, obj):
         """Get count of attachments."""
         return obj.attachments.count()
-    
+
     def get_note_count(self, obj):
         """Get count of notes."""
         return obj.notes.count()
-    
+
     class Meta:
         model = MedicalRecord
         fields = [
@@ -144,6 +145,10 @@ class MedicalRecordListSerializer(serializers.ModelSerializer):
             'has_allergy',
             'attachment_count',
             'note_count',
+            'folder_name',
+            'severity_level',
+            'severity_display',
+            'sequence_number',
         ]
         read_only_fields = ['id', 'created_at']
 
@@ -156,13 +161,14 @@ class MedicalRecordDetailSerializer(serializers.ModelSerializer):
     patient_email = serializers.EmailField(source='patient.email', read_only=True)
     created_by_email = serializers.EmailField(source='created_by.email', read_only=True)
     updated_by_email = serializers.EmailField(source='updated_by.email', read_only=True)
-    
+    severity_display = serializers.CharField(source='get_severity_level_display', read_only=True)
+
     # Nested serializers
     prescription = PrescriptionSerializer(read_only=True)
     allergy = AllergySerializer(read_only=True)
     attachments = MedicalRecordAttachmentSerializer(many=True, read_only=True)
     notes = MedicalRecordNoteSerializer(many=True, read_only=True)
-    
+
     class Meta:
         model = MedicalRecord
         fields = [
@@ -189,6 +195,11 @@ class MedicalRecordDetailSerializer(serializers.ModelSerializer):
             'allergy',
             'attachments',
             'notes',
+            'folder_name',
+            'severity_level',
+            'severity_display',
+            'sequence_number',
+            'timeline_order',
         ]
         read_only_fields = [
             'id',
@@ -208,7 +219,7 @@ class MedicalRecordCreateSerializer(serializers.ModelSerializer):
     prescription = PrescriptionSerializer(required=False, allow_null=True)
     allergy = AllergySerializer(required=False, allow_null=True)
     patient_record_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
-    
+
     class Meta:
         model = MedicalRecord
         fields = [
@@ -225,6 +236,9 @@ class MedicalRecordCreateSerializer(serializers.ModelSerializer):
             'followup_date',
             'prescription',
             'allergy',
+            'folder_name',
+            'severity_level',
+            'sequence_number',
         ]
 
     def validate(self, attrs):
@@ -333,7 +347,7 @@ class MedicalRecordUpdateSerializer(serializers.ModelSerializer):
     """
     prescription = PrescriptionSerializer(required=False, allow_null=True)
     allergy = AllergySerializer(required=False, allow_null=True)
-    
+
     class Meta:
         model = MedicalRecord
         fields = [
@@ -349,13 +363,17 @@ class MedicalRecordUpdateSerializer(serializers.ModelSerializer):
             'followup_date',
             'prescription',
             'allergy',
+            'folder_name',
+            'severity_level',
+            'sequence_number',
+            'timeline_order',
         ]
-    
+
     def validate(self, attrs):
         """Ensure patients cannot modify provider-created records inappropriately."""
         request = self.context.get('request')
         instance = self.instance
-        
+
         if request and request.user:
             # If record was created by a provider, patients have limited edit rights
             if (
@@ -370,7 +388,7 @@ class MedicalRecordUpdateSerializer(serializers.ModelSerializer):
                         raise serializers.ValidationError(
                             f'Patients cannot modify {field} on provider-created records.'
                         )
-        
+
         return attrs
     
     def update(self, instance, validated_data):

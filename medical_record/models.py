@@ -171,6 +171,37 @@ class MedicalRecord(models.Model):
         blank=True,
         help_text='Date for follow-up appointment or check'
     )
+
+    # Organization and severity
+    sequence_number = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Sequential number for ordering this patient\'s records'
+    )
+    folder_name = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='Custom folder/category name for organization (e.g., "Cardiology", "Surgery")'
+    )
+    severity_level = models.CharField(
+        max_length=20,
+        choices=[
+            ('CRITICAL', 'Critical'),
+            ('HIGH', 'High'),
+            ('MEDIUM', 'Medium'),
+            ('LOW', 'Low'),
+            ('INFO', 'Informational'),
+        ],
+        default='MEDIUM',
+        db_index=True,
+        help_text='Clinical severity level of this medical event'
+    )
+    timeline_order = models.IntegerField(
+        default=0,
+        db_index=True,
+        help_text='Numeric value for ordering records in timeline view'
+    )
     
     class Meta:
         db_table = 'medical_records'
@@ -184,6 +215,9 @@ class MedicalRecord(models.Model):
             models.Index(fields=['created_by']),
             models.Index(fields=['is_active', '-record_date']),
             models.Index(fields=['requires_followup', 'followup_date']),
+            models.Index(fields=['severity_level', '-record_date']),
+            models.Index(fields=['patient', 'folder_name']),
+            models.Index(fields=['patient', 'severity_level', '-record_date']),
         ]
     
     def __str__(self):

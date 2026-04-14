@@ -277,6 +277,7 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
 
         Includes medical records, prescriptions, appointments, nurse requests,
         and provider access grants so patients can verify full history.
+        Also includes organized records by timeline, diagnosis, and severity.
         """
         if request.user.role != UserRole.PATIENT:
             return Response(
@@ -313,6 +314,7 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
             patient_record__linked_user=user
         ).select_related('provider__user', 'patient_record').order_by('-created_at')
 
+        # Organize records
         records_data = [
             {
                 'id': r.id,
@@ -327,9 +329,54 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
                 'followup_date': r.followup_date,
                 'created_at': r.created_at,
                 'updated_at': r.updated_at,
+                'folder_name': r.folder_name,
+                'severity_level': r.severity_level,
+                'sequence_number': r.sequence_number,
             }
             for r in records_qs
         ]
+
+        # GROUP BY TIMELINE (recent first)
+        timeline_records = sorted(records_data, key=lambda x: x['record_date'], reverse=True)
+
+        # GROUP BY DIAGNOSIS
+        by_diagnosis = {}
+        for record in records_data:
+            key = record['diagnosis_code'] or record['record_type']
+            if key not in by_diagnosis:
+                by_diagnosis[key] = {'diagnosis': key, 'count': 0, 'records': [], 'most_recent': None}
+            by_diagnosis[key]['count'] += 1
+            by_diagnosis[key]['records'].append(record)
+            if by_diagnosis[key]['most_recent'] is None or record['record_date'] > by_diagnosis[key]['most_recent']['record_date']:
+                by_diagnosis[key]['most_recent'] = record
+
+        # GROUP BY SEVERITY
+        by_severity = {
+            'CRITICAL': [],
+            'HIGH': [],
+            'MEDIUM': [],
+            'LOW': [],
+            'INFO': [],
+        }
+        for record in records_data:
+            severity = record.get('severity_level', 'MEDIUM')
+            by_severity[severity].append(record)
+
+        # GROUP BY FOLDER
+        by_folder = {}
+        for record in records_data:
+            folder = record.get('folder_name') or 'Uncategorized'
+            if folder not in by_folder:
+                by_folder[folder] = []
+            by_folder[folder].append(record)
+
+        # RECENT RECORDS (30 days)
+        from datetime import timedelta
+        thirty_days_ago = timezone.now().date() - timedelta(days=30)
+        recent_records = [r for r in records_data if r['record_date'] >= thirty_days_ago]
+
+        # CRITICAL/HIGH PRIORITY
+        critical_records = [r for r in records_data if r['severity_level'] in ['CRITICAL', 'HIGH']]
 
         prescriptions_data = [
             {
@@ -415,17 +462,28 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
             },
             'summary': {
                 'medical_records': len(records_data),
+                'critical_or_high_priority': len(critical_records),
+                'recent_30_days': len(recent_records),
                 'prescriptions': len(prescriptions_data),
                 'appointments': len(appointments_data),
                 'nurse_requests': len(nurse_requests_data),
                 'provider_access_grants': len(provider_access_data),
             },
-            'medical_records': records_data,
+            'medical_records': {
+                'all': records_data,
+                'by_timeline': timeline_records,
+                'by_diagnosis': list(by_diagnosis.values()),
+                'by_severity': by_severity,
+                'by_folder': by_folder,
+                'recent_30_days': recent_records,
+                'critical_or_high_priority': critical_records,
+            },
             'prescriptions': prescriptions_data,
             'appointments': appointments_data,
             'nurse_requests': nurse_requests_data,
             'provider_access': provider_access_data,
         })
+
     
     def _get_client_ip(self):
         """Get client IP address from request."""
