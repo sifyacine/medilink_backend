@@ -47,7 +47,7 @@ class IsPrescriptionDoctor(BasePermission):
     message = "You can only modify prescriptions you created."
     
     def has_object_permission(self, request, view, obj):
-        if request.method in SAFE_METHODS:
+        if request.user.is_staff or request.user.is_superuser:
             return True
 
         doctor = get_doctor_from_user(request.user)
@@ -58,14 +58,14 @@ class CanViewPrescription(BasePermission):
     """
     Allow viewing prescription if user is:
     - The doctor who created it
-    - The patient (with account)
+    - The patient (direct or linked)
     - Admin
+    - A provider with granted access to the patient/record
     """
     message = "You do not have permission to view this prescription."
     
     def has_object_permission(self, request, view, obj):
         user = request.user
-        
         if not user or not user.is_authenticated:
             return False
         
@@ -73,18 +73,31 @@ class CanViewPrescription(BasePermission):
         if user.is_staff or user.is_superuser:
             return True
         
-        # Doctor who created it
-        doctor = get_doctor_from_user(user)
-        if doctor and obj.doctor == doctor:
+        # Patient check (direct or linked)
+        if obj.patient == user or (obj.patient_record and obj.patient_record.linked_user == user):
             return True
+            
+        # Provider check
+        from common.enums import UserRole
+        if user.role == UserRole.PROVIDER:
+            provider = getattr(user, 'provider_profile', None)
+            if not provider:
+                return False
                 
-        # Patient with account
-        if obj.patient == user:
-            return True
-        
-        # Patient via patient_record link
-        if obj.patient_record and hasattr(obj.patient_record, 'user') and obj.patient_record.user == user:
-            return True
+            # Is creator?
+            doctor = getattr(provider, 'doctor_profile', None)
+            if doctor and obj.doctor == doctor:
+                return True
+                
+            # Has granted access?
+            if obj.patient:
+                from medical_record.models import ProviderAccess
+                if ProviderAccess.objects.filter(patient=obj.patient, provider=provider, is_active=True).exists():
+                    return True
+            if obj.patient_record:
+                from patients.models import ProviderPatientAccess
+                if ProviderPatientAccess.objects.filter(patient_record=obj.patient_record, provider=provider).exists():
+                    return True
         
         return False
 
@@ -93,6 +106,7 @@ class CanModifyPrescription(BasePermission):
     """
     Only allow the doctor who created the prescription to modify it,
     and only if it's in DRAFT status.
+    Admins can modify all.
     """
     message = "You can only modify draft prescriptions you created."
     

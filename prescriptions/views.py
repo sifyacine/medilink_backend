@@ -69,7 +69,7 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
             permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
         elif self.action in ['update', 'partial_update', 'destroy']:
             permission_classes = [permissions.IsAuthenticated, CanModifyPrescription]
-        elif self.action in ['upload_pdf', 'issue', 'cancel']:
+        elif self.action in ['upload_pdf', 'issue', 'dispense', 'cancel']:
             permission_classes = [permissions.IsAuthenticated, IsPrescriptionDoctor]
         elif self.action == 'items':
             if self.request.method == 'POST':
@@ -97,8 +97,10 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
         return PrescriptionDetailSerializer
     
     def get_queryset(self):
-        """Filter queryset based on user role."""
+        """Filter queryset based on user role and granted access."""
         user = self.request.user
+        from common.enums import UserRole
+        
         queryset = Prescription.objects.select_related(
             'doctor', 'patient', 'patient_record', 'clinic', 'appointment'
         ).prefetch_related('items')
@@ -106,24 +108,47 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
         if user.is_staff or user.is_superuser:
             return queryset
         
-        # Doctor sees their own prescriptions
-        # Relationship: User -> provider_profile (Provider) -> doctor_profile (Doctor)
-        doctor = None
-        try:
+        # Patients see their own prescriptions
+        if user.role == UserRole.PATIENT:
+            return queryset.filter(
+                Q(patient=user) |
+                Q(patient_record__linked_user=user)
+            )
+        
+        # Providers see prescriptions for patients they have access to
+        if user.role == UserRole.PROVIDER:
             provider = getattr(user, 'provider_profile', None)
-            if provider:
-                doctor = getattr(provider, 'doctor_profile', None)
-        except Exception:
-            pass
-        
-        if doctor:
-            return queryset.filter(doctor=doctor)
-        
-        # Patient sees their own prescriptions
-        return queryset.filter(
-            Q(patient=user) |
-            Q(patient_record__linked_user=user)
-        )
+            if not provider:
+                return queryset.none()
+            
+            # 1. Accessible patients (linked via User)
+            from medical_record.models import ProviderAccess
+            accessible_patient_ids = ProviderAccess.objects.filter(
+                provider=provider,
+                is_active=True
+            ).values_list('patient_id', flat=True)
+            
+            # 2. Accessible patient records (linked via PatientRecord)
+            from patients.models import ProviderPatientAccess
+            accessible_record_ids = ProviderPatientAccess.objects.filter(
+                provider=provider
+            ).values_list('patient_record_id', flat=True)
+            
+            # Combine filters:
+            # - Prescriptions created by this provider (if they are a doctor)
+            # - Prescriptions for patients with granted access
+            # - Prescriptions for patient records with granted access
+            doctor = getattr(provider, 'doctor_profile', None)
+            
+            filter_q = Q(patient_id__in=accessible_patient_ids) | \
+                       Q(patient_record_id__in=accessible_record_ids)
+            
+            if doctor:
+                filter_q |= Q(doctor=doctor)
+                
+            return queryset.filter(filter_q)
+            
+        return queryset.none()
     
     @action(detail=True, methods=['post'], url_path='upload-pdf',
             parser_classes=[MultiPartParser, FormParser])
@@ -171,6 +196,28 @@ class PrescriptionViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK
         )
     
+    @action(detail=True, methods=['post'])
+    def dispense(self, request, pk=None):
+        """
+        Mark a prescription as dispensed.
+        
+        POST /api/prescriptions/{id}/dispense/
+        """
+        prescription = self.get_object()
+        
+        try:
+            prescription.mark_dispensed()
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        return Response(
+            PrescriptionDetailSerializer(prescription, context={'request': request}).data,
+            status=status.HTTP_200_OK
+        )
+
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         """
