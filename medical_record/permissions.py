@@ -7,38 +7,68 @@ from common.enums import UserRole
 from django.utils import timezone
 
 
-def has_provider_access(provider, patient, required_access='READ_ONLY'):
+def get_record_patient_user(record):
+    """Resolve the owning patient user for a medical record when available."""
+    if record.patient:
+        return record.patient
+    if record.patient_record and record.patient_record.linked_user:
+        return record.patient_record.linked_user
+    return None
+
+
+def has_provider_access(provider, patient=None, patient_record=None, required_access='READ_ONLY'):
     """
     Check if a provider has valid access to a patient's records.
     
     Args:
         provider: Provider instance
         patient: User instance (patient)
+        patient_record: PatientRecord instance
         required_access: 'READ_ONLY', 'FULL', or 'LIMITED'
     
     Returns:
         bool: True if provider has valid access
     """
     from medical_record.models import ProviderAccess
-    
-    try:
-        access = ProviderAccess.objects.get(
-            provider=provider,
-            patient=patient,
-            is_active=True
-        )
-        
-        # Check expiration
-        if access.expires_at and timezone.now() > access.expires_at:
-            return False
-        
-        # Check access level
-        if required_access == 'FULL' and access.access_type != 'FULL':
-            return False
-        
-        return True
-    except ProviderAccess.DoesNotExist:
-        return False
+    from patients.models import ProviderPatientAccess
+
+    # Resolve patient_record from patient when possible
+    if not patient_record and patient and hasattr(patient, 'patient_record'):
+        patient_record = patient.patient_record
+
+    # Check new medical_record.ProviderAccess grants
+    if patient:
+        try:
+            access = ProviderAccess.objects.get(
+                provider=provider,
+                patient=patient,
+                is_active=True
+            )
+
+            if access.expires_at and timezone.now() > access.expires_at:
+                return False
+
+            if required_access == 'FULL' and access.access_type != 'FULL':
+                return False
+
+            return True
+        except ProviderAccess.DoesNotExist:
+            pass
+
+    # Backward compatibility for legacy patient record access grants
+    if patient_record:
+        try:
+            access = ProviderPatientAccess.objects.get(
+                provider=provider,
+                patient_record=patient_record,
+            )
+            if required_access == 'FULL' and access.access_level != 'FULL':
+                return False
+            return True
+        except ProviderPatientAccess.DoesNotExist:
+            pass
+
+    return False
 
 
 class IsPatientOwnerOrAuthorizedProvider(permissions.BasePermission):
@@ -83,7 +113,8 @@ class IsPatientOwnerOrAuthorizedProvider(permissions.BasePermission):
         
         # Patients can access their own records
         if request.user.role == UserRole.PATIENT:
-            return obj.patient == request.user
+            record_owner = get_record_patient_user(obj)
+            return record_owner == request.user
         
         # Providers need explicit access grant
         if request.user.role == UserRole.PROVIDER:
@@ -99,7 +130,7 @@ class IsPatientOwnerOrAuthorizedProvider(permissions.BasePermission):
                     return True
                 
                 # Otherwise check ProviderAccess
-                return has_provider_access(provider, obj.patient)
+                return has_provider_access(provider, obj.patient, obj.patient_record)
             except Exception:
                 pass
         
@@ -158,7 +189,8 @@ class CanModifyMedicalRecord(permissions.BasePermission):
         
         # Patients can modify their own records
         if request.user.role == UserRole.PATIENT:
-            if obj.patient == request.user:
+            record_owner = get_record_patient_user(obj)
+            if record_owner == request.user:
                 return True
             return False
         
@@ -175,7 +207,7 @@ class CanModifyMedicalRecord(permissions.BasePermission):
                     return True
                 
                 # Need FULL access to modify other records
-                return has_provider_access(provider, obj.patient, 'FULL')
+                return has_provider_access(provider, obj.patient, obj.patient_record, 'FULL')
             except Exception:
                 pass
         
@@ -199,7 +231,8 @@ class CanDeleteMedicalRecord(permissions.BasePermission):
         
         # Patients can delete their own records
         if request.user.role == UserRole.PATIENT:
-            return obj.patient == request.user
+            record_owner = get_record_patient_user(obj)
+            return record_owner == request.user
         
         # Providers can delete records they created
         if request.user.role == UserRole.PROVIDER:

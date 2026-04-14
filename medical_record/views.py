@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from django.http import HttpResponse
 from django.db import models
+from django.utils import timezone
 
 from accounts.models import User
 from common.enums import UserRole
@@ -54,7 +55,7 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
         CanModifyMedicalRecord,
     ]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['record_type', 'is_active', 'requires_followup', 'patient']
+    filterset_fields = ['record_type', 'is_active', 'requires_followup', 'patient', 'patient_record']
     search_fields = ['title', 'description', 'symptoms', 'diagnosis_code']
     ordering_fields = ['record_date', 'created_at', 'updated_at']
     ordering = ['-record_date', '-created_at']
@@ -75,7 +76,10 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
         
         # Patients can only see their own records
         if self.request.user.role == UserRole.PATIENT:
-            queryset = queryset.filter(patient=self.request.user)
+            queryset = queryset.filter(
+                models.Q(patient=self.request.user) |
+                models.Q(patient_record__linked_user=self.request.user)
+            )
         
         # Providers can see records of patients they have access to
         elif self.request.user.role == UserRole.PROVIDER:
@@ -86,10 +90,18 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
                     provider=provider,
                     is_active=True
                 ).values_list('patient_id', flat=True)
+
+                # Legacy patient-record access grants (used by appointment/nurse request workflows)
+                from patients.models import ProviderPatientAccess
+                authorized_patient_record_ids = ProviderPatientAccess.objects.filter(
+                    provider=provider
+                ).values_list('patient_record_id', flat=True)
                 
                 # Also include records they created
                 queryset = queryset.filter(
                     models.Q(patient_id__in=authorized_patient_ids) |
+                    models.Q(patient_record_id__in=authorized_patient_record_ids) |
+                    models.Q(patient_record__linked_user_id__in=authorized_patient_ids) |
                     models.Q(created_by=self.request.user)
                 ).distinct()
             except Exception:
@@ -100,6 +112,7 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
         
         return queryset.select_related(
             'patient',
+            'patient_record',
             'created_by',
             'updated_by'
         ).prefetch_related(
@@ -110,17 +123,8 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
         )
     
     def perform_create(self, serializer):
-        """Create medical record and log access."""
-        medical_record = serializer.save()
-        
-        # Log access
-        from medical_record.models import MedicalRecordAccessLog
-        MedicalRecordAccessLog.objects.create(
-            medical_record=medical_record,
-            accessed_by=self.request.user,
-            access_type='CREATE',
-            ip_address=self._get_client_ip()
-        )
+        """Create medical record."""
+        serializer.save()
     
     def retrieve(self, request, *args, **kwargs):
         """Retrieve medical record and log access."""
@@ -226,7 +230,7 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        queryset = self.get_queryset().filter(patient=request.user)
+        queryset = self.get_queryset()
         page = self.paginate_queryset(queryset)
         
         if page is not None:
@@ -253,7 +257,10 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        queryset = self.get_queryset().filter(patient=patient)
+        queryset = self.get_queryset().filter(
+            models.Q(patient=patient) |
+            models.Q(patient_record__linked_user=patient)
+        )
         page = self.paginate_queryset(queryset)
         
         if page is not None:
@@ -262,6 +269,163 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='my-health-data')
+    def my_health_data(self, request):
+        """
+        Return a consolidated health-data bundle for the authenticated patient.
+
+        Includes medical records, prescriptions, appointments, nurse requests,
+        and provider access grants so patients can verify full history.
+        """
+        if request.user.role != UserRole.PATIENT:
+            return Response(
+                {'error': 'This endpoint is only available for patients.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        user = request.user
+        records_qs = self.get_queryset().filter(is_active=True).order_by('-record_date', '-created_at')
+
+        from prescriptions.models import Prescription as RxPrescription
+        prescriptions_qs = RxPrescription.objects.filter(
+            models.Q(patient=user) |
+            models.Q(patient_record__linked_user=user)
+        ).select_related('doctor', 'clinic', 'appointment').prefetch_related('items').order_by('-created_at')
+
+        from appointments.models import Appointment
+        appointments_qs = Appointment.objects.filter(
+            models.Q(patient_user=user) |
+            models.Q(patient_record__linked_user=user)
+        ).select_related('provider').order_by('-appointment_date', '-created_at')
+
+        from nurse_requests.models import NurseServiceRequest
+        nurse_requests_qs = NurseServiceRequest.objects.filter(
+            models.Q(patient_user=user) |
+            models.Q(patient_record__linked_user=user)
+        ).select_related('service', 'accepted_nurse').order_by('-created_at')
+
+        from medical_record.models import ProviderAccess
+        provider_access_qs = ProviderAccess.objects.filter(patient=user).select_related('provider__user').order_by('-granted_at')
+
+        from patients.models import ProviderPatientAccess
+        legacy_access_qs = ProviderPatientAccess.objects.filter(
+            patient_record__linked_user=user
+        ).select_related('provider__user', 'patient_record').order_by('-created_at')
+
+        records_data = [
+            {
+                'id': r.id,
+                'title': r.title,
+                'record_type': r.record_type,
+                'record_date': r.record_date,
+                'description': r.description,
+                'diagnosis_code': r.diagnosis_code,
+                'symptoms': r.symptoms,
+                'is_confidential': r.is_confidential,
+                'requires_followup': r.requires_followup,
+                'followup_date': r.followup_date,
+                'created_at': r.created_at,
+                'updated_at': r.updated_at,
+            }
+            for r in records_qs
+        ]
+
+        prescriptions_data = [
+            {
+                'id': str(p.id),
+                'reference_number': p.reference_number,
+                'status': p.status,
+                'valid_until': p.valid_until,
+                'issued_at': p.issued_at,
+                'created_at': p.created_at,
+                'doctor_name': p.doctor.full_name if p.doctor else None,
+                'clinic_name': p.clinic.name if p.clinic else None,
+                'items': [
+                    {
+                        'id': str(item.id),
+                        'medication_name': item.medication_name,
+                        'dosage': item.dosage,
+                        'frequency': item.frequency,
+                        'duration_days': item.duration_days,
+                        'duration_text': item.duration_text,
+                        'instructions': item.instructions,
+                    }
+                    for item in p.items.all()
+                ],
+            }
+            for p in prescriptions_qs
+        ]
+
+        appointments_data = [
+            {
+                'id': str(a.id),
+                'status': a.status,
+                'appointment_date': a.appointment_date,
+                'appointment_time': a.appointment_time,
+                'created_at': a.created_at,
+            }
+            for a in appointments_qs
+        ]
+
+        nurse_requests_data = [
+            {
+                'id': r.id,
+                'status': r.status,
+                'service_title': r.service.title if r.service else None,
+                'city': r.city,
+                'final_price': r.final_price,
+                'created_at': r.created_at,
+                'completed_at': r.completed_at,
+            }
+            for r in nurse_requests_qs
+        ]
+
+        provider_access_data = [
+            {
+                'id': a.id,
+                'provider_id': str(a.provider.id),
+                'provider_email': a.provider.user.email if a.provider and a.provider.user else None,
+                'access_type': a.access_type,
+                'is_active': a.is_active,
+                'expires_at': a.expires_at,
+                'granted_at': a.granted_at,
+                'source': 'medical_record.ProviderAccess',
+            }
+            for a in provider_access_qs
+        ] + [
+            {
+                'id': a.id,
+                'provider_id': str(a.provider.id),
+                'provider_email': a.provider.user.email if a.provider and a.provider.user else None,
+                'access_type': a.access_level,
+                'is_active': True,
+                'expires_at': None,
+                'granted_at': a.created_at,
+                'source': 'patients.ProviderPatientAccess',
+            }
+            for a in legacy_access_qs
+        ]
+
+        return Response({
+            'generated_at': timezone.now(),
+            'patient': {
+                'id': str(user.id),
+                'email': user.email,
+            },
+            'summary': {
+                'medical_records': len(records_data),
+                'prescriptions': len(prescriptions_data),
+                'appointments': len(appointments_data),
+                'nurse_requests': len(nurse_requests_data),
+                'provider_access_grants': len(provider_access_data),
+            },
+            'medical_records': records_data,
+            'prescriptions': prescriptions_data,
+            'appointments': appointments_data,
+            'nurse_requests': nurse_requests_data,
+            'provider_access': provider_access_data,
+        })
     
     def _get_client_ip(self):
         """Get client IP address from request."""
@@ -341,7 +505,8 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
         try:
             # Get patient's records
             records = MedicalRecord.objects.filter(
-                patient=request.user,
+                models.Q(patient=request.user) |
+                models.Q(patient_record__linked_user=request.user),
                 is_active=True
             ).select_related('created_by').prefetch_related(
                 'prescription', 'allergy'

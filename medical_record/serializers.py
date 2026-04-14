@@ -207,11 +207,13 @@ class MedicalRecordCreateSerializer(serializers.ModelSerializer):
     """
     prescription = PrescriptionSerializer(required=False, allow_null=True)
     allergy = AllergySerializer(required=False, allow_null=True)
+    patient_record_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     
     class Meta:
         model = MedicalRecord
         fields = [
             'patient',
+            'patient_record_id',
             'title',
             'record_type',
             'diagnosis_code',
@@ -224,32 +226,61 @@ class MedicalRecordCreateSerializer(serializers.ModelSerializer):
             'prescription',
             'allergy',
         ]
-    
-    def validate_patient(self, value):
-        """Ensure patient is valid and user has permission to create records for them."""
+
+    def validate(self, attrs):
+        """Validate target patient identity and permissions."""
         request = self.context.get('request')
         if not request or not request.user:
             raise serializers.ValidationError('Authentication required.')
-        
-        # Patients can only create records for themselves
-        if request.user.role == UserRole.PATIENT:
-            if value != request.user:
+
+        patient = attrs.get('patient')
+        patient_record_id = attrs.pop('patient_record_id', None)
+        patient_record = None
+
+        if patient_record_id:
+            from patients.models import PatientRecord
+            try:
+                patient_record = PatientRecord.objects.get(id=patient_record_id)
+            except PatientRecord.DoesNotExist:
+                raise serializers.ValidationError({'patient_record_id': 'Patient record not found.'})
+
+        if not patient and not patient_record:
+            raise serializers.ValidationError('Either patient or patient_record_id must be provided.')
+
+        if patient and patient_record and patient_record.linked_user and patient_record.linked_user != patient:
+            raise serializers.ValidationError(
+                'Provided patient does not match the linked user of patient_record.'
+            )
+
+        user = request.user
+        if user.role == UserRole.PATIENT:
+            if patient and patient != user:
+                raise serializers.ValidationError('Patients can only create records for themselves.')
+            if patient_record and patient_record.linked_user != user:
                 raise serializers.ValidationError(
-                    'Patients can only create medical records for themselves.'
+                    'Patients can only create records linked to their own patient record.'
                 )
-        
-        # Providers can create records for any patient
-        elif request.user.role == UserRole.PROVIDER:
-            if value.role != UserRole.PATIENT:
-                raise serializers.ValidationError(
-                    'Medical records can only be created for patients.'
-                )
-        
-        # Admins can create records for any patient
-        elif request.user.role != UserRole.ADMIN:
+
+            attrs['patient'] = user
+            if patient_record:
+                attrs['patient_record'] = patient_record
+
+        elif user.role == UserRole.PROVIDER:
+            if patient and patient.role != UserRole.PATIENT:
+                raise serializers.ValidationError('Medical records can only be created for patients.')
+            if patient_record:
+                attrs['patient_record'] = patient_record
+
+        elif user.role == UserRole.ADMIN:
+            if patient and patient.role != UserRole.PATIENT:
+                raise serializers.ValidationError('Medical records can only be created for patients.')
+            if patient_record:
+                attrs['patient_record'] = patient_record
+
+        else:
             raise serializers.ValidationError('Insufficient permissions.')
-        
-        return value
+
+        return attrs
     
     def create(self, validated_data):
         """Create medical record with nested prescription/allergy if provided."""

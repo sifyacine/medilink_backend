@@ -11,8 +11,70 @@ only see committed data.
 import logging
 import django.dispatch
 from django.db import transaction
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_patient_record_for_request(request_obj):
+    """Resolve or create a patient record for the nurse request patient."""
+    from patients.models import PatientRecord
+
+    if request_obj.patient_record:
+        return request_obj.patient_record
+
+    user = request_obj.patient_user
+    if not user:
+        return None
+
+    try:
+        return PatientRecord.objects.get(linked_user=user)
+    except PatientRecord.DoesNotExist:
+        full_name = user.get_full_name().split() if user.get_full_name() else []
+        first_name = full_name[0] if full_name else user.email.split('@')[0]
+        last_name = full_name[-1] if len(full_name) > 1 else ''
+        return PatientRecord.objects.create(
+            linked_user=user,
+            first_name=first_name,
+            last_name=last_name,
+            date_of_birth=timezone.now().date(),
+            gender='PREFER_NOT_TO_SAY',
+            phone_number='',
+            email=user.email,
+        )
+
+
+def _grant_medical_access_for_accepted_request(request_obj, nurse_provider):
+    """Grant both legacy and current medical record access for accepted nurse requests."""
+    if not nurse_provider:
+        return
+
+    from patients.models import ProviderPatientAccess
+    from medical_record.models import ProviderAccess
+
+    patient_record = _ensure_patient_record_for_request(request_obj)
+    if patient_record:
+        ProviderPatientAccess.objects.update_or_create(
+            provider=nurse_provider,
+            patient_record=patient_record,
+            defaults={
+                'access_level': 'FULL',
+                'granted_by': nurse_provider,
+            },
+        )
+
+    patient_user = request_obj.get_patient_user()
+    if patient_user:
+        ProviderAccess.objects.update_or_create(
+            provider=nurse_provider,
+            patient=patient_user,
+            defaults={
+                'access_type': 'FULL',
+                'is_active': True,
+                'expires_at': None,
+                'reason': f'Auto-granted via nurse request {request_obj.pk}',
+            },
+        )
 
 # -----------------------------------------------------------------------
 # Custom signals (dispatched from views)
@@ -71,6 +133,7 @@ def _on_status_changed(sender, request, old_status, new_status, **kwargs):
             if new_status == RequestStatus.ACCEPTED:
                 accepted_offer = fresh.offers.filter(status='ACCEPTED').select_related('nurse__user').first()
                 if accepted_offer:
+                    _grant_medical_access_for_accepted_request(fresh, accepted_offer.nurse)
                     NurseRequestNotifier.notify_offer_accepted(fresh, accepted_offer)
 
             elif new_status == RequestStatus.IN_PROGRESS:

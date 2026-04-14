@@ -187,6 +187,28 @@ def _add_patient_to_provider_list(appointment):
             f"{provider.id}'s patient list via appointment {appointment.pk}"
         )
 
+    # Keep medical_record.ProviderAccess in sync for user-linked patient records.
+    patient_user = appointment.patient_user or patient_record.linked_user
+    if patient_user:
+        try:
+            from medical_record.models import ProviderAccess
+            ProviderAccess.objects.update_or_create(
+                provider=provider,
+                patient=patient_user,
+                defaults={
+                    'access_type': 'FULL',
+                    'is_active': True,
+                    'expires_at': None,
+                    'reason': f'Auto-granted via appointment {appointment.pk}',
+                },
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not sync medical_record.ProviderAccess for appointment %s: %s",
+                appointment.pk,
+                e,
+            )
+
 
 def _broadcast_generic_update(appointment):
     """
