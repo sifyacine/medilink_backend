@@ -335,19 +335,19 @@ class MedicationType(models.TextChoices):
 
 class DosageFrequency(models.TextChoices):
     """Common dosage frequencies."""
-    ONCE_DAILY = 'QD', 'Once daily'
-    TWICE_DAILY = 'BID', 'Twice daily'
-    THREE_TIMES_DAILY = 'TID', 'Three times daily'
-    FOUR_TIMES_DAILY = 'QID', 'Four times daily'
-    EVERY_MORNING = 'QAM', 'Every morning'
-    EVERY_EVENING = 'QPM', 'Every evening'
-    EVERY_BEDTIME = 'QHS', 'At bedtime'
-    AS_NEEDED = 'PRN', 'As needed'
-    EVERY_4_HOURS = 'Q4H', 'Every 4 hours'
-    EVERY_6_HOURS = 'Q6H', 'Every 6 hours'
-    EVERY_8_HOURS = 'Q8H', 'Every 8 hours'
-    EVERY_12_HOURS = 'Q12H', 'Every 12 hours'
-    ONCE_WEEKLY = 'QW', 'Once weekly'
+    ONCE_DAILY = 'ONCE_DAILY', 'Once daily'
+    TWICE_DAILY = 'TWICE_DAILY', 'Twice daily'
+    THREE_TIMES_DAILY = 'THREE_TIMES_DAILY', 'Three times daily'
+    FOUR_TIMES_DAILY = 'FOUR_TIMES_DAILY', 'Four times daily'
+    EVERY_MORNING = 'EVERY_MORNING', 'Every morning'
+    EVERY_EVENING = 'EVERY_EVENING', 'Every evening'
+    EVERY_BEDTIME = 'EVERY_BEDTIME', 'At bedtime'
+    AS_NEEDED = 'AS_NEEDED', 'As needed'
+    EVERY_4_HOURS = 'EVERY_4_HOURS', 'Every 4 hours'
+    EVERY_6_HOURS = 'EVERY_6_HOURS', 'Every 6 hours'
+    EVERY_8_HOURS = 'EVERY_8_HOURS', 'Every 8 hours'
+    EVERY_12_HOURS = 'EVERY_12_HOURS', 'Every 12 hours'
+    ONCE_WEEKLY = 'ONCE_WEEKLY', 'Once weekly'
     CUSTOM = 'CUSTOM', 'Custom schedule'
 
 

@@ -204,7 +204,7 @@ class PrescriptionCreateSerializer(serializers.ModelSerializer):
     """
     
     patient_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
-    patient_record_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    patient_record_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     appointment_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
     clinic_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
     items = PrescriptionItemCreateSerializer(many=True, required=False)
