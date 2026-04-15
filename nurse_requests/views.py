@@ -740,7 +740,7 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
                 'offer_id': offer.id,
                 'nurse_id': offer.nurse.id,
                 'nurse_name': offer.nurse.user.get_full_name() or offer.nurse.user.email,
-                'declined_price': str(offer.offered_price),
+                'declined_price': f"{float(offer.offered_price):.2f} DZD",
                 'reason': reason
             }
         )

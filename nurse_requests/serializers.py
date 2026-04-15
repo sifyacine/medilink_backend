@@ -291,8 +291,8 @@ class CreateNurseServiceRequestSerializer(serializers.ModelSerializer):
                 service = Service.objects.get(id=service_id)
                 if value < service.price:
                     raise serializers.ValidationError(
-                        f"Offered price (${value}) cannot be lower than "
-                        f"base price (${service.price})"
+                        f"Offered price ({value:.2f} DZD) cannot be lower than "
+                        f"base price ({service.price:.2f} DZD)"
                     )
             except Service.DoesNotExist:
                 raise serializers.ValidationError("Invalid service selected")
@@ -359,13 +359,13 @@ class NurseCounterOfferSerializer(serializers.Serializer):
         request = self.context.get('request')
         if value < request.patient_offered_price:
             raise serializers.ValidationError(
-                f"Counter offer (${value}) must be at least "
-                f"${request.patient_offered_price}"
+                f"Counter offer ({value:.2f} DZD) must be at least "
+                f"{request.patient_offered_price:.2f} DZD"
             )
         if value < request.base_price:
             raise serializers.ValidationError(
-                f"Counter offer (${value}) cannot be lower than "
-                f"base price (${request.base_price})"
+                f"Counter offer ({value:.2f} DZD) cannot be lower than "
+                f"base price ({request.base_price:.2f} DZD)"
             )
         return value
 
@@ -462,10 +462,9 @@ class NurseProfileServiceSerializer(serializers.Serializer):
     created_at = serializers.DateTimeField(read_only=True)
     
     def get_effective_price(self, obj):
-        """Return custom price if set, otherwise base price"""
-        if obj.custom_price:
-            return str(obj.custom_price)
-        return str(obj.service.price)
+        """Return custom price if set, otherwise base price formatted in DZD"""
+        price = obj.custom_price if obj.custom_price else obj.service.price
+        return f"{float(price):.2f} DZD"
 
 
 # =============================================================================
@@ -603,7 +602,7 @@ class NurseProfileDetailSerializer(serializers.Serializer):
             return [{
                 'id': ns.service.id,
                 'title': ns.service.title,
-                'price': str(ns.custom_price or ns.service.price),
+                'price': f"{float(ns.custom_price or ns.service.price):.2f} DZD",
                 'duration_minutes': ns.service.duration_minutes,
             } for ns in nurse_services]
         except Exception:

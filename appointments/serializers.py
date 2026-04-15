@@ -61,19 +61,21 @@ class AppointmentServiceDetailSerializer(serializers.ModelSerializer):
         Otherwise, use the base service price.
         """
         from services.models import DoctorService
-        
+
         service = obj.service
         provider = obj.appointment.provider
-        
+
         # Check if doctor has custom pricing for this service
         try:
             doctor_service = DoctorService.objects.get(
                 doctor=provider,
                 service=service
             )
-            return str(doctor_service.custom_price) if doctor_service.custom_price else str(service.price)
+            price = doctor_service.custom_price if doctor_service.custom_price else service.price
         except DoctorService.DoesNotExist:
-            return str(service.price)
+            price = service.price
+
+        return f"{float(price):.2f} DZD"
 
 
 class AppointmentListSerializer(serializers.ModelSerializer):

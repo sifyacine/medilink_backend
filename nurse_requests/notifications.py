@@ -137,6 +137,7 @@ class NurseRequestNotifier:
     def notify_nurse_offer(cls, request_obj, offer):
         """
         Notify the patient when a nurse submits an offer (accept or counter-offer).
+        Uses DZD currency format and sends full nurse name instead of email.
         """
         patient_user = request_obj.get_patient_user()
         if not patient_user:
@@ -144,13 +145,19 @@ class NurseRequestNotifier:
 
         offer_data = cls._serialize_offer(offer)
         request_data = cls._serialize_request(request_obj)
-        nurse_name = offer_data.get('nurse_name', 'A nurse')
+
+        # Get full name of nurse instead of email
+        if hasattr(offer.nurse, 'nurse_profile'):
+            nurse_name = offer.nurse.nurse_profile.full_name or offer.nurse.user.email.split('@')[0]
+        else:
+            nurse_name = offer.nurse.user.get_full_name() or offer.nurse.user.email.split('@')[0]
+
         is_counter = offer.offered_price > request_obj.patient_offered_price
 
         if is_counter:
             title = '💰 Counter Offer Received'
             message = (
-                f'{nurse_name} offered ${offer.offered_price} for '
+                f'{nurse_name} offered {offer.offered_price:.2f} DZD for '
                 f'{request_obj.service.title}.'
             )
             notif_type = NotificationType.NURSE_REQUEST_COUNTER_OFFER
@@ -158,7 +165,7 @@ class NurseRequestNotifier:
             title = '🩺 Nurse Responded'
             message = (
                 f'{nurse_name} accepted your request for '
-                f'{request_obj.service.title} at ${offer.offered_price}.'
+                f'{request_obj.service.title} at {offer.offered_price:.2f} DZD.'
             )
             notif_type = NotificationType.NURSE_REQUEST_OFFER
 
@@ -186,6 +193,7 @@ class NurseRequestNotifier:
     def notify_offer_accepted(cls, request_obj, accepted_offer):
         """
         Notify the nurse whose offer was accepted AND inform the patient.
+        Uses DZD currency format.
         """
         request_data = cls._serialize_request(request_obj)
         patient_name = request_obj.get_patient_display_name()
@@ -197,7 +205,7 @@ class NurseRequestNotifier:
             title='✅ Your Offer Was Accepted',
             message=(
                 f'{patient_name} accepted your offer for '
-                f'{request_obj.service.title}. Final price: ${request_obj.final_price}.'
+                f'{request_obj.service.title}. Final price: {request_obj.final_price:.2f} DZD.'
             ),
             related_object=request_obj,
             notification_type=NotificationType.NURSE_REQUEST_ACCEPTED,
@@ -362,10 +370,17 @@ class NurseRequestNotifier:
     def notify_offer_declined(cls, request_obj, nurse_provider, reason: str = ''):
         """
         Notify a nurse when their offer is declined by the patient.
+        Uses DZD currency format and full nurse name.
         """
         nurse_user = nurse_provider.user
         patient_name = request_obj.get_patient_display_name()
         reason_text = reason or 'No reason provided'
+
+        # Get nurse full name for message
+        if hasattr(nurse_provider, 'nurse_profile'):
+            nurse_name = nurse_provider.nurse_profile.full_name or nurse_user.get_full_name()
+        else:
+            nurse_name = nurse_user.get_full_name() or nurse_user.email.split('@')[0]
 
         NotificationService.create_for_object(
             recipient=nurse_user,
@@ -394,6 +409,7 @@ class NurseRequestNotifier:
     def notify_review_received(cls, request_obj, review):
         """
         Notify a nurse when they receive a review from a patient.
+        Uses DZD currency format and patient full name.
         """
         from reviews.models import ReviewStatus
 

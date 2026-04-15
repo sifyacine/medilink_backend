@@ -169,8 +169,8 @@ class NurseServiceRequest(models.Model):
         if self.patient_offered_price is not None and self.base_price is not None:
             if self.patient_offered_price < self.base_price:
                 raise ValueError(
-                    f"Patient offered price (${self.patient_offered_price}) cannot be "
-                    f"lower than base price (${self.base_price})"
+                    f"Patient offered price ({self.patient_offered_price:.2f} DZD) cannot be "
+                    f"lower than base price ({self.base_price:.2f} DZD)"
                 )
         super().save(*args, **kwargs)
 
@@ -236,19 +236,19 @@ class NurseOffer(models.Model):
         ]
 
     def __str__(self):
-        return f"Offer by {self.nurse} for Request #{self.request.id} - ${self.offered_price}"
+        return f"Offer by {self.nurse} for Request #{self.request.id} - {self.offered_price:.2f} DZD"
 
     def save(self, *args, **kwargs):
         # Validate offered price is >= patient's offered price and base price
         if self.offered_price < self.request.patient_offered_price:
             raise ValueError(
-                f"Nurse offered price (${self.offered_price}) cannot be lower than "
-                f"patient's offered price (${self.request.patient_offered_price})"
+                f"Nurse offered price ({self.offered_price:.2f} DZD) cannot be lower than "
+                f"patient's offered price ({self.request.patient_offered_price:.2f} DZD)"
             )
         if self.offered_price < self.request.base_price:
             raise ValueError(
-                f"Nurse offered price (${self.offered_price}) cannot be lower than "
-                f"base price (${self.request.base_price})"
+                f"Nurse offered price ({self.offered_price:.2f} DZD) cannot be lower than "
+                f"base price ({self.request.base_price:.2f} DZD)"
             )
         super().save(*args, **kwargs)
 

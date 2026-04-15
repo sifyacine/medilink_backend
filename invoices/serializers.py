@@ -57,7 +57,7 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
             return {
                 'id': str(obj.service.id),
                 'title': obj.service.title,
-                'price': str(obj.service.price),
+                'price': f"{float(obj.service.price):.2f} DZD",
                 'currency': obj.service.currency,
             }
         return None
@@ -68,7 +68,7 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
             return {
                 'id': str(obj.custom_service.id),
                 'title': obj.custom_service.title,
-                'price': str(obj.custom_service.price),
+                'price': f"{float(obj.custom_service.price):.2f} DZD",
             }
         return None
     
@@ -223,13 +223,13 @@ class PaymentSerializer(serializers.ModelSerializer):
         """Validate payment data."""
         invoice = data.get('invoice')
         is_refund = data.get('is_refund', False)
-        
+
         if not is_refund:
             # Check if payment doesn't exceed amount due
             amount = data.get('amount', Decimal('0.00'))
             if invoice and amount > invoice.amount_due:
                 raise serializers.ValidationError({
-                    'amount': f'Payment amount exceeds amount due ({invoice.amount_due}).'
+                    'amount': f'Payment amount exceeds amount due ({invoice.amount_due:.2f} DZD).'
                 })
         else:
             # Refund validation
@@ -237,7 +237,7 @@ class PaymentSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     'refund_reason': 'Refund reason is required.'
                 })
-        
+
         return data
     
     def create(self, validated_data):
