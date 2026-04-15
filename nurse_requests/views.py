@@ -28,6 +28,7 @@ from .serializers import (
     PatientSavedAddressSerializer,
     NurseProfileDetailSerializer,
     NurseReviewHistorySerializer,
+    NurseRequestHistorySerializer,
 )
 from providers.models import Provider, Nurse
 from .permissions import IsPatient, IsNurse, IsRequestOwner
@@ -649,13 +650,125 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
                 ErrorCodes.REQUEST_INVALID_STATUS,
                 str(e)
             )
-    
+
+    @action(detail=True, methods=['post'])
+    def decline_offer(self, request, pk=None):
+        """
+        Decline a specific nurse offer without cancelling the entire request.
+        Patient can continue reviewing other offers.
+
+        Body:
+        {
+            "offer_id": 123,
+            "reason": "Looking for other options"  # Optional
+        }
+        """
+        try:
+            request_obj = self.get_object()
+        except Exception:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_FOUND,
+                'Request not found',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        # Validate permissions
+        if request_obj.patient_user != request.user:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_OWNER,
+                'You do not have permission to decline offers on this request',
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+
+        # Validate status - can only decline when there are pending offers
+        if request_obj.status == RequestStatus.ACCEPTED:
+            return error_response(
+                ErrorCodes.REQUEST_ALREADY_ACCEPTED,
+                'This request already has an accepted offer'
+            )
+
+        if request_obj.status == RequestStatus.CANCELLED:
+            return error_response(
+                ErrorCodes.REQUEST_ALREADY_CANCELLED,
+                'This request has been cancelled'
+            )
+
+        if request_obj.status == RequestStatus.COMPLETED:
+            return error_response(
+                ErrorCodes.REQUEST_ALREADY_COMPLETED,
+                'This request has already been completed'
+            )
+
+        # Get offer to decline
+        offer_id = request.data.get('offer_id')
+        reason = request.data.get('reason', '')
+
+        if not offer_id:
+            return error_response(
+                ErrorCodes.OFFER_NOT_FOUND,
+                'offer_id is required',
+                {'field': 'offer_id'}
+            )
+
+        try:
+            offer = NurseOffer.objects.get(id=offer_id, request=request_obj)
+        except NurseOffer.DoesNotExist:
+            return error_response(
+                ErrorCodes.OFFER_NOT_FOUND,
+                'Invalid offer selected',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if offer is still pending
+        if offer.status not in [OfferStatus.PENDING, OfferStatus.COUNTER_OFFERED]:
+            return error_response(
+                ErrorCodes.OFFER_NOT_AVAILABLE,
+                'This offer is no longer available for declining'
+            )
+
+        # Decline the offer
+        old_status = offer.status
+        offer.status = OfferStatus.REJECTED
+        offer.save()
+
+        # Log to request history
+        RequestHistory.objects.create(
+            request=request_obj,
+            actor=request.user,
+            action='OFFER_DECLINED',
+            details={
+                'offer_id': offer.id,
+                'nurse_id': offer.nurse.id,
+                'nurse_name': offer.nurse.user.get_full_name() or offer.nurse.user.email,
+                'declined_price': str(offer.offered_price),
+                'reason': reason
+            }
+        )
+
+        # Send notification to nurse about the decline
+        from .signals import request_status_changed as status_signal
+
+        # Trigger notification for offer decline
+        try:
+            from .notifications import NurseRequestNotifier
+            NurseRequestNotifier.notify_offer_declined(request_obj, offer.nurse, reason)
+        except Exception as e:
+            logger_instance = __import__('logging').getLogger(__name__)
+            logger_instance.error(f"Failed to send decline notification: {e}")
+
+        response_serializer = NurseServiceRequestDetailSerializer(request_obj)
+        return Response({
+            'success': True,
+            'data': response_serializer.data,
+            'message': f'Offer declined. You can continue reviewing other offers.'
+        })
+
     @action(detail=True, methods=['get'], url_path='nurse-profile/(?P<nurse_id>[^/.]+)')
     def nurse_profile(self, request, pk=None, nurse_id=None):
         """
         Get detailed profile of a nurse who made an offer.
         Allows patients to review nurse credentials before accepting.
-        
+
         GET /patient/nurse-requests/{request_id}/nurse-profile/{nurse_id}/
         """
         try:
@@ -666,7 +779,7 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
                 'Request not found',
                 status_code=status.HTTP_404_NOT_FOUND
             )
-        
+
         # Verify the nurse has made an offer on this request
         try:
             offer = NurseOffer.objects.get(
@@ -679,7 +792,7 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
                 'This nurse has not made an offer on this request',
                 status_code=status.HTTP_404_NOT_FOUND
             )
-        
+
         # Get the nurse profile
         try:
             nurse = Nurse.objects.get(provider_id=nurse_id)
@@ -1545,4 +1658,158 @@ class NurseMyOffersViewSet(viewsets.ReadOnlyModelViewSet):
             'count': queryset.count(),
             'results': serializer.data,
             'stats': stats
+        })
+
+
+# =============================================================================
+# NURSE REQUEST HISTORY
+# =============================================================================
+
+class NurseRequestHistoryViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for nurses to view their request history (accepted, declined, completed requests).
+
+    Endpoints:
+    - GET /nurse/request-history/ - List request history with filtering
+    - GET /nurse/request-history/{id}/ - Get history detail
+
+    Query Parameters:
+    - status: Filter by request status (ACCEPTED, IN_PROGRESS, COMPLETED, CANCELLED)
+    - date_from: Filter requests from date (ISO 8601: YYYY-MM-DD)
+    - date_to: Filter requests until date (ISO 8601: YYYY-MM-DD)
+    - patient_name: Filter by partial patient name
+    - ordering: Sort by field (e.g., -completed_at, final_price)
+    - page: Pagination page number
+    - page_size: Results per page (default 20)
+    """
+    permission_classes = [IsAuthenticated, IsNurse]
+    serializer_class = NurseRequestHistorySerializer
+    pagination_class = None  # Use default pagination from settings
+
+    def get_queryset(self):
+        """Get nurse's request history."""
+        nurse = self._get_nurse(self.request)
+        if not nurse:
+            return NurseServiceRequest.objects.none()
+
+        # Get all requests where this nurse was accepted (invited to service)
+        queryset = NurseServiceRequest.objects.filter(
+            accepted_nurse=nurse.provider
+        ).select_related(
+            'service', 'patient_user', 'patient_record', 'accepted_nurse__user'
+        ).order_by('-created_at')
+
+        # Filter by request status
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter.upper())
+
+        # Filter by date range
+        date_from = self.request.query_params.get('date_from')
+        if date_from:
+            try:
+                from datetime import datetime
+                date_from_dt = datetime.fromisoformat(date_from).date()
+                queryset = queryset.filter(completed_at__date__gte=date_from_dt)
+            except (ValueError, TypeError):
+                pass
+
+        date_to = self.request.query_params.get('date_to')
+        if date_to:
+            try:
+                from datetime import datetime
+                date_to_dt = datetime.fromisoformat(date_to).date()
+                queryset = queryset.filter(completed_at__date__lte=date_to_dt)
+            except (ValueError, TypeError):
+                pass
+
+        # Filter by patient name (partial match)
+        patient_name = self.request.query_params.get('patient_name')
+        if patient_name:
+            from django.db.models import Q
+            queryset = queryset.filter(
+                Q(patient_record__first_name__icontains=patient_name) |
+                Q(patient_record__last_name__icontains=patient_name) |
+                Q(patient_user__first_name__icontains=patient_name) |
+                Q(patient_user__last_name__icontains=patient_name)
+            )
+
+        # Handle ordering
+        ordering = self.request.query_params.get('ordering', '-completed_at')
+        queryset = queryset.order_by(ordering)
+
+        return queryset
+
+    def _get_nurse(self, request):
+        """Get nurse profile from request user."""
+        try:
+            nurse = Nurse.objects.get(provider__user=request.user)
+            return nurse
+        except Nurse.DoesNotExist:
+            return None
+
+    def list(self, request, *args, **kwargs):
+        """List nurse's request history with stats."""
+        nurse = self._get_nurse(request)
+
+        if not nurse:
+            return error_response(
+                ErrorCodes.NURSE_PROFILE_NOT_FOUND,
+                'Nurse profile not found',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        queryset = self.get_queryset()
+
+        # Pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response({
+                'success': True,
+                'results': serializer.data
+            })
+
+        serializer = self.get_serializer(queryset, many=True)
+
+        # Get stats
+        all_requests = NurseServiceRequest.objects.filter(accepted_nurse=nurse.provider)
+        stats = {
+            'total_accepted': all_requests.filter(status=RequestStatus.ACCEPTED).count(),
+            'total_in_progress': all_requests.filter(status=RequestStatus.IN_PROGRESS).count(),
+            'total_completed': all_requests.filter(status=RequestStatus.COMPLETED).count(),
+            'total_cancelled': all_requests.filter(status=RequestStatus.CANCELLED).count(),
+        }
+
+        return Response({
+            'success': True,
+            'count': queryset.count(),
+            'results': serializer.data,
+            'stats': stats
+        })
+
+    def retrieve(self, request, pk=None):
+        """Get detailed view of a request from history."""
+        try:
+            request_obj = self.get_object()
+        except Exception:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_FOUND,
+                'Request not found',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        # Verify this nurse was accepted for this request
+        nurse = self._get_nurse(request)
+        if not nurse or request_obj.accepted_nurse != nurse.provider:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_OWNER,
+                'You do not have permission to view this request',
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = self.get_serializer(request_obj)
+        return Response({
+            'success': True,
+            'data': serializer.data
         })

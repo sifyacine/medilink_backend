@@ -17,6 +17,7 @@ def update_review_aggregate_on_save(sender, instance, **kwargs):
         object_id=instance.reviewed_object_id
     )
     transaction.on_commit(lambda: _push_dashboard_review_update(instance))
+    transaction.on_commit(lambda: _notify_review_for_nurse_request(instance))
 
 
 @receiver(post_delete, sender=Review)
@@ -83,3 +84,47 @@ def _push_dashboard_review_update(review_instance):
         )
     except Exception as e:
         logger.error("Error pushing dashboard review update: %s", e)
+
+
+def _notify_review_for_nurse_request(review_instance):
+    """Trigger nurse request notification when a review is submitted for a nurse request context."""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        from django.contrib.contenttypes.models import ContentType
+        from nurse_requests.models import NurseServiceRequest
+        from nurse_requests.notifications import NurseRequestNotifier
+        from reviews.models import ReviewStatus
+
+        # Only notify if status is ACTIVE
+        if review_instance.status != ReviewStatus.ACTIVE:
+            return
+
+        # Check if this review has a NurseServiceRequest context
+        if not review_instance.context_content_type or not review_instance.context_object_id:
+            return
+
+        request_ct = ContentType.objects.get_for_model(NurseServiceRequest)
+        if review_instance.context_content_type.pk != request_ct.pk:
+            return
+
+        # Get the nurse request
+        request_obj = NurseServiceRequest.objects.get(pk=review_instance.context_object_id)
+
+        # Trigger notification
+        NurseRequestNotifier.notify_review_received(request_obj, review_instance)
+
+        # Also notify about rating change
+        from reviews.models import get_review_aggregate
+        aggregate = get_review_aggregate(request_obj.accepted_nurse)
+        if aggregate:
+            NurseRequestNotifier.notify_rating_changed(
+                request_obj.accepted_nurse,
+                aggregate.average_rating,
+                aggregate.review_count
+            )
+
+    except Exception as e:
+        logger.error(f"Error notifying review for nurse request: {e}")
+

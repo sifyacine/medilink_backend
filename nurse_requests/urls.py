@@ -5,7 +5,8 @@ from .views import (
     PatientNurseRequestViewSet,
     NurseAvailableRequestsViewSet,
     NurseMyOffersViewSet,
-    NurseProfileServicesViewSet
+    NurseProfileServicesViewSet,
+    NurseRequestHistoryViewSet
 )
 
 # Router for standard CRUD operations
@@ -37,14 +38,19 @@ nurse_router.register(
     NurseProfileServicesViewSet,
     basename='nurse-my-services'
 )
+nurse_router.register(
+    r'request-history',
+    NurseRequestHistoryViewSet,
+    basename='nurse-request-history'
+)
 
 urlpatterns = [
     # Common endpoints (services catalog)
     path('', include(router.urls)),
-    
+
     # Patient endpoints
     path('patient/', include(patient_router.urls)),
-    
+
     # Nurse endpoints
     path('nurse/', include(nurse_router.urls)),
 ]

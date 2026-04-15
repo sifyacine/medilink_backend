@@ -357,3 +357,121 @@ class NurseRequestNotifier:
             'request_id': request_obj.pk,
             'message': 'Request has been cancelled',
         })
+
+    @classmethod
+    def notify_offer_declined(cls, request_obj, nurse_provider, reason: str = ''):
+        """
+        Notify a nurse when their offer is declined by the patient.
+        """
+        nurse_user = nurse_provider.user
+        patient_name = request_obj.get_patient_display_name()
+        reason_text = reason or 'No reason provided'
+
+        NotificationService.create_for_object(
+            recipient=nurse_user,
+            title='📋 Offer Declined',
+            message=(
+                f'{patient_name} declined your offer for {request_obj.service.title}. '
+                f'Reason: {reason_text}'
+            ),
+            related_object=request_obj,
+            notification_type=NotificationType.NURSE_REQUEST_CANCELLED,
+            priority=NotificationPriority.NORMAL,
+            action_url=f'/nurse-requests/{request_obj.pk}',
+            data={'request_id': str(request_obj.pk)},
+        )
+
+        # Send WebSocket notification
+        request_data = cls._serialize_request(request_obj)
+        ws_data = {
+            'request': request_data,
+            'message': f'{patient_name} declined your offer',
+            'reason': reason_text,
+        }
+        cls._ws_to_nurse(nurse_provider, 'nurse_offer_declined', ws_data)
+
+    @classmethod
+    def notify_review_received(cls, request_obj, review):
+        """
+        Notify a nurse when they receive a review from a patient.
+        """
+        from reviews.models import ReviewStatus
+
+        # Determine who is being reviewed (assuming nurse is being reviewed by patient)
+        # Get the reviewed object - should be the nurse (provider)
+        if not request_obj.accepted_nurse:
+            return
+
+        # Check if this review is for the nurse (patient reviewing nurse)
+        try:
+            from django.contrib.contenttypes.models import ContentType
+            nurse_ct = ContentType.objects.get_for_model(request_obj.accepted_nurse)
+
+            if review.reviewed_content_type == nurse_ct and str(review.reviewed_object_id) == str(request_obj.accepted_nurse.id):
+                # Patient left review for nurse
+                nurse_user = request_obj.accepted_nurse.user
+                patient_name = request_obj.get_patient_display_name()
+
+                NotificationService.create_for_object(
+                    recipient=nurse_user,
+                    title='⭐ New Review',
+                    message=(
+                        f'{patient_name} left you a {review.rating}★ review for '
+                        f'{request_obj.service.title}. "{review.text[:50] if review.text else ""}"'
+                    ),
+                    related_object=request_obj,
+                    notification_type=NotificationType.NURSE_REQUEST_COMPLETED,
+                    priority=NotificationPriority.NORMAL,
+                    action_url=f'/reviews/{review.pk}',
+                    data={'request_id': str(request_obj.pk), 'review_id': str(review.id)},
+                )
+
+                # Send WebSocket notification
+                ws_data = {
+                    'review_id': str(review.id),
+                    'rating': review.rating,
+                    'text': review.text[:150] if review.text else '',
+                    'message': f'{patient_name} left you a review',
+                }
+                cls._ws_to_nurse(request_obj.accepted_nurse, 'nurse_review_received', ws_data)
+        except Exception:
+            pass
+
+    @classmethod
+    def notify_rating_changed(cls, nurse_provider, new_average_rating, review_count):
+        """
+        Notify nurse when their rating changes after receiving a review.
+        """
+        nurse_user = nurse_provider.user
+
+        NotificationService.create_for_object(
+            recipient=nurse_user,
+            title='📊 Rating Updated',
+            message=(
+                f'Your average rating is now {new_average_rating:.1f}★ '
+                f'based on {review_count} reviews.'
+            ),
+            related_object=nurse_provider,
+            notification_type=NotificationType.NURSE_REQUEST_COMPLETED,
+            priority=NotificationPriority.LOW,
+            action_url=f'/profile/reviews',
+            data={'average_rating': float(new_average_rating), 'review_count': review_count},
+        )
+
+        # Send WebSocket notification
+        ws_data = {
+            'average_rating': float(new_average_rating),
+            'review_count': review_count,
+            'message': 'Your rating has been updated',
+        }
+        cls._ws_to_provider(nurse_provider, 'nurse_rating_updated', ws_data)
+
+    @classmethod
+    def _ws_to_provider(cls, provider, message_type: str, data: dict):
+        """Push a WS event to a specific provider."""
+        if hasattr(provider, 'user'):
+            WebSocketBroadcaster.send_to_patient(
+                user_id=provider.user.id,
+                message_type=message_type,
+                data=data,
+            )

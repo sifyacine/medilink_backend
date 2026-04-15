@@ -610,6 +610,146 @@ class NurseProfileDetailSerializer(serializers.Serializer):
             return []
 
 
+class NurseRequestHistorySerializer(serializers.ModelSerializer):
+    """Serializer for nurse's request history with filtering and history details."""
+    service_name = serializers.CharField(source='service.title', read_only=True)
+    patient_name = serializers.SerializerMethodField()
+    patient_initials = serializers.SerializerMethodField()
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    can_leave_review = serializers.SerializerMethodField()
+    nurse_review = serializers.SerializerMethodField()
+    patient_review = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NurseServiceRequest
+        fields = [
+            'id', 'service_name', 'patient_name', 'patient_initials',
+            'status', 'status_display', 'final_price', 'base_price',
+            'accepted_at', 'started_at', 'completed_at', 'cancelled_at',
+            'cancellation_reason', 'city',
+            'can_leave_review', 'nurse_review', 'patient_review',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = fields
+
+    def get_patient_name(self, obj):
+        """Get anonymized patient name for privacy."""
+        name = obj.get_patient_display_name()
+        if name and len(name) > 2:
+            # Show first initial and last initial
+            return f"{name[0]}. {name.split()[-1] if ' ' in name else 'P.'}"
+        return "Patient"
+
+    def get_patient_initials(self, obj):
+        """Get patient initials for avatar."""
+        name = obj.get_patient_display_name()
+        if name:
+            parts = name.split()
+            if len(parts) >= 2:
+                return f"{parts[0][0]}{parts[-1][0]}"
+            else:
+                return name[:2]
+        return "P"
+
+    def get_can_leave_review(self, obj):
+        """Check if nurse can leave a review (completed & not reviewed yet)."""
+        if obj.status != RequestStatus.COMPLETED or not obj.accepted_nurse:
+            return False
+
+        try:
+            from reviews.models import Review, ReviewStatus
+            from django.contrib.contenttypes.models import ContentType
+
+            # Check if nurse (provider) already reviewed patient
+            patient_user = obj.get_patient_user()
+            if not patient_user:
+                return False
+
+            patient_ct = ContentType.objects.get_for_model(patient_user)
+            request_ct = ContentType.objects.get_for_model(obj)
+
+            # Look for nurse's review of patient for this request
+            exists = Review.objects.filter(
+                reviewer=obj.accepted_nurse.user,
+                reviewed_content_type=patient_ct,
+                reviewed_object_id=str(patient_user.id),
+                context_content_type=request_ct,
+                context_object_id=str(obj.id),
+                status=ReviewStatus.ACTIVE
+            ).exists()
+
+            return not exists
+        except Exception:
+            return False
+
+    def get_nurse_review(self, obj):
+        """Get review submitted by nurse to patient."""
+        try:
+            from reviews.models import Review, ReviewStatus
+            from django.contrib.contenttypes.models import ContentType
+
+            if not obj.accepted_nurse or obj.status != RequestStatus.COMPLETED:
+                return None
+
+            patient_user = obj.get_patient_user()
+            if not patient_user:
+                return None
+
+            patient_ct = ContentType.objects.get_for_model(patient_user)
+            request_ct = ContentType.objects.get_for_model(obj)
+
+            review = Review.objects.filter(
+                reviewer=obj.accepted_nurse.user,
+                reviewed_content_type=patient_ct,
+                reviewed_object_id=str(patient_user.id),
+                context_content_type=request_ct,
+                context_object_id=str(obj.id),
+                status=ReviewStatus.ACTIVE
+            ).first()
+
+            if review:
+                return {
+                    'id': str(review.id),
+                    'rating': review.rating,
+                    'text': review.text[:150] if review.text else '',
+                    'created_at': review.created_at.isoformat(),
+                }
+        except Exception:
+            pass
+        return None
+
+    def get_patient_review(self, obj):
+        """Get review submitted by patient to nurse."""
+        try:
+            from reviews.models import Review, ReviewStatus
+            from django.contrib.contenttypes.models import ContentType
+
+            if not obj.accepted_nurse or obj.status != RequestStatus.COMPLETED:
+                return None
+
+            nurse_ct = ContentType.objects.get_for_model(obj.accepted_nurse)
+            request_ct = ContentType.objects.get_for_model(obj)
+
+            review = Review.objects.filter(
+                reviewed_content_type=nurse_ct,
+                reviewed_object_id=str(obj.accepted_nurse.id),
+                context_content_type=request_ct,
+                context_object_id=str(obj.id),
+                status=ReviewStatus.ACTIVE
+            ).first()
+
+            if review:
+                return {
+                    'id': str(review.id),
+                    'rating': review.rating,
+                    'text': review.text[:150] if review.text else '',
+                    'created_at': review.created_at.isoformat(),
+                }
+        except Exception:
+            pass
+        return None
+
+
 class NurseReviewHistorySerializer(serializers.Serializer):
     """Serializer for nurse's review history (completed services)."""
     id = serializers.IntegerField(read_only=True)
@@ -618,20 +758,20 @@ class NurseReviewHistorySerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(read_only=True)
     final_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     review = serializers.SerializerMethodField()
-    
+
     def get_patient_name(self, obj):
         """Get anonymized patient name."""
         name = obj.get_patient_display_name()
         if name and len(name) > 2:
             return f"{name[0]}***{name[-1]}"
         return "Patient"
-    
+
     def get_review(self, obj):
         """Get review for this service if exists."""
         try:
             from reviews.models import Review, ReviewStatus
             from django.contrib.contenttypes.models import ContentType
-            
+
             # Look for review with this request as context
             request_ct = ContentType.objects.get_for_model(obj)
             review = Review.objects.filter(
@@ -639,7 +779,7 @@ class NurseReviewHistorySerializer(serializers.Serializer):
                 context_object_id=str(obj.id),
                 status=ReviewStatus.ACTIVE
             ).first()
-            
+
             if review:
                 return {
                     'rating': review.rating,
