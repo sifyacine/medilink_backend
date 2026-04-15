@@ -88,6 +88,7 @@ class AppointmentListSerializer(serializers.ModelSerializer):
     location_type_display = serializers.CharField(source='get_location_type_display', read_only=True)
     is_upcoming = serializers.BooleanField(read_only=True)
     allowed_actions = serializers.SerializerMethodField()
+    can_leave_review = serializers.SerializerMethodField()
     
     class Meta:
         model = Appointment
@@ -107,9 +108,26 @@ class AppointmentListSerializer(serializers.ModelSerializer):
             'reason',
             'is_upcoming',
             'allowed_actions',
+            'can_leave_review',
             'created_at',
         ]
     
+    def get_can_leave_review(self, obj):
+        if obj.status != AppointmentStatus.COMPLETED:
+            return False
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+            
+        from reviews.models import Review
+        has_review = Review.objects.filter(
+            reviewer=request.user,
+            context_type='appointment',
+            context_id=str(obj.id)
+        ).exists()
+        
+        return not has_review
+        
     def get_provider_name(self, obj):
         """Use centralized provider name helper."""
         return get_provider_display_name(obj.provider)
@@ -159,6 +177,7 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
     is_upcoming = serializers.BooleanField(read_only=True)
     is_past = serializers.BooleanField(read_only=True)
     allowed_actions = serializers.SerializerMethodField()
+    can_leave_review = serializers.SerializerMethodField()
     
     class Meta:
         model = Appointment
@@ -211,6 +230,7 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
             'is_upcoming',
             'is_past',
             'allowed_actions',
+            'can_leave_review',
             'created_at',
             'updated_at',
         ]
@@ -226,6 +246,22 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
     
+    def get_can_leave_review(self, obj):
+        if obj.status != AppointmentStatus.COMPLETED:
+            return False
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+            
+        from reviews.models import Review
+        has_review = Review.objects.filter(
+            reviewer=request.user,
+            context_type='appointment',
+            context_id=str(obj.id)
+        ).exists()
+        
+        return not has_review
+
     def get_provider_name(self, obj):
         """Use centralized provider name helper."""
         return get_provider_display_name(obj.provider)
