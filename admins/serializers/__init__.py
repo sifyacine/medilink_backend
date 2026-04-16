@@ -31,6 +31,11 @@ from admins.serializers.products import (
     MediLinkProductListSerializer,
     MediLinkSaleSerializer,
 )
+from admins.serializers.public_products import (
+    PublicProductListSerializer,
+    PublicProductDetailSerializer,
+    PublicProductImageSerializer,
+)
 
 __all__ = [
     'ProviderListSerializer',
@@ -53,4 +58,7 @@ __all__ = [
     'MediLinkProductSerializer',
     'MediLinkProductListSerializer',
     'MediLinkSaleSerializer',
+    'PublicProductListSerializer',
+    'PublicProductDetailSerializer',
+    'PublicProductImageSerializer',
 ]

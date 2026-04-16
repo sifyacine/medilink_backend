@@ -134,6 +134,7 @@
 ### Feature Documentation
 - **PATIENT_API.md** - Patient app (complementary to Nurse API)
 - **NURSE_API.md** - Nurse app (complete - THIS IS THE PRIMARY REFERENCE)
+- **PUBLIC_PRODUCTS_API.md** - Public product catalog browsing and search
 
 ---
 
@@ -147,6 +148,7 @@
 | Request History | ✅ | ✅ | NURSE_API.md |
 | **Profile Management** | ✅ | ✅ | NURSE_API.md, NURSE_APP_SUMMARY.md |
 | **Invoice Management** | View | Create/Manage | NURSE_API.md, NURSE_APP_SUMMARY.md |
+| **Public Product Catalog** | ✅ | ✅ | PUBLIC_PRODUCTS_API.md |
 | Reviews & Ratings | ✅ | ✅ | Both APIs |
 | Notifications | ✅ | ✅ | Both APIs, NOTIFICATIONS.md |
 
@@ -178,6 +180,11 @@
 → **NURSE_API.md** - Reviews & Ratings section  
 → **NURSE_APP_SUMMARY.md** - Review context explanation  
 → See one-per-user enforcement
+
+### "How do I browse products publicly?"
+→ **PUBLIC_PRODUCTS_API.md** - Product catalog endpoints, search, pagination
+→ Use `/api/products/` for public listings
+→ Use `search`, `category`, `ordering`, `page`, and `page_size`
 
 ### "What are the invoice statuses?"
 → **NURSE_API.md** - Invoice Management section  

@@ -12,6 +12,7 @@ from admins.views.analytics import (
 from admins.views.activity_log import AdminActivityLogViewSet
 from admins.views.invoices import AdminInvoiceViewSet
 from admins.views.products import MediLinkProductViewSet, MediLinkIncomeViewSet
+from admins.views.public_products import PublicProductViewSet
 
 __all__ = [
         'AdminProviderViewSet',
@@ -26,4 +27,5 @@ __all__ = [
         'AdminInvoiceViewSet',
         'MediLinkProductViewSet',
         'MediLinkIncomeViewSet',
+        'PublicProductViewSet',
 ]

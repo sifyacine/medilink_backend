@@ -34,6 +34,9 @@ urlpatterns = [
     
     # Social media endpoints
     path('api/social-links/', include('social_media.urls')),
+
+    # Public product catalog
+    path('api/products/', include('admins.public_urls')),
     
     # Medical records endpoints
     path('api/medical-records/', include('medical_record.urls')),
