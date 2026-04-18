@@ -131,7 +131,15 @@ class Nurse(models.Model):
         default=50,
         help_text='Maximum distance in kilometers that nurse can travel for service requests (default: 50km)'
     )
-    
+
+    # Location Tracking Mode
+    location_tracking_mode = models.CharField(
+        max_length=20,
+        choices=[('GPS', 'Automatic GPS'), ('ON_DEMAND', 'On-Demand'), ('BOTH', 'Both')],
+        default='GPS',
+        help_text='How nurse reports location: GPS automatic, manual on-demand, or both'
+    )
+
     # Timestamps
     created_at = models.DateTimeField(
         default=timezone.now,
@@ -163,6 +171,58 @@ class Nurse(models.Model):
     def full_name(self):
         """Return full name."""
         return f'{self.first_name} {self.last_name}'
+
+
+class NurseLocation(models.Model):
+    """
+    Real-time location tracking for nurses.
+    Tracks current location separately from profile to enable efficient location-based queries.
+    """
+    nurse = models.OneToOneField(
+        Nurse,
+        on_delete=models.CASCADE,
+        related_name='current_location',
+        help_text='Nurse whose current location this tracks'
+    )
+    latitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        help_text='Latitude coordinate of current location'
+    )
+    longitude = models.DecimalField(
+        max_digits=9,
+        decimal_places=6,
+        help_text='Longitude coordinate of current location'
+    )
+    accuracy_meters = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text='GPS accuracy in meters (optional, for mobile tracking)'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Whether nurse is actively sharing location'
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        help_text='Last update timestamp'
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text='Location first recorded timestamp'
+    )
+
+    class Meta:
+        db_table = 'nurse_locations'
+        verbose_name = 'Nurse Location'
+        verbose_name_plural = 'Nurse Locations'
+        indexes = [
+            models.Index(fields=['nurse', 'is_active']),
+            models.Index(fields=['-updated_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.nurse.full_name} at ({self.latitude}, {self.longitude})'
 
 
 class NurseCertification(models.Model):
@@ -208,12 +268,12 @@ class NurseCertification(models.Model):
     created_at = models.DateTimeField(
         default=timezone.now
     )
-    
+
     class Meta:
         db_table = 'nurse_certifications'
         verbose_name = 'Nurse Certification'
         verbose_name_plural = 'Nurse Certifications'
         ordering = ['-issue_date']
-    
+
     def __str__(self):
         return f'{self.nurse.full_name} - {self.title}'

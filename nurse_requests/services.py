@@ -1,5 +1,7 @@
 from django.db import transaction
 from django.utils import timezone
+from math import radians, sin, cos, sqrt, atan2
+from decimal import Decimal
 from .models import (
     NurseServiceRequest,
     NurseOffer,
@@ -7,7 +9,8 @@ from .models import (
     RequestStatus,
     OfferStatus
 )
-from providers.models import Provider
+from providers.models import Provider, Nurse
+from providers.models.nurse import NurseLocation
 
 
 class NurseRequestService:
@@ -62,10 +65,100 @@ class NurseRequestService:
             return request
 
     @staticmethod
+    def _calculate_distance(lat1, lon1, lat2, lon2):
+        """
+        Calculate distance between two coordinates using Haversine formula.
+
+        Args:
+            lat1, lon1: Patient location (Decimal)
+            lat2, lon2: Nurse location (Decimal)
+
+        Returns:
+            Distance in kilometers (float)
+        """
+        # Convert Decimal to float
+        lat1, lon1, lat2, lon2 = map(float, [lat1, lon1, lat2, lon2])
+
+        # Convert to radians
+        lat1_rad, lon1_rad = radians(lat1), radians(lon1)
+        lat2_rad, lon2_rad = radians(lat2), radians(lon2)
+
+        # Haversine formula
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
+
+        a = sin(dlat / 2) ** 2 + cos(lat1_rad) * cos(lat2_rad) * sin(dlon / 2) ** 2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+
+        # Earth radius in kilometers
+        R = 6371.0
+        distance = R * c
+
+        return distance
+
+    @staticmethod
+    def get_nurses_within_radius(patient_latitude, patient_longitude, max_distance_km=30):
+        """
+        Find all available, verified nurses within a radius of patient location.
+
+        Args:
+            patient_latitude: Patient location latitude (Decimal)
+            patient_longitude: Patient location longitude (Decimal)
+            max_distance_km: Maximum distance in kilometers (default: 30)
+
+        Returns:
+            List of tuples: [(Nurse object, distance_km), ...]
+        """
+        # Get all active, verified, available nurses with current location
+        nurses_with_location = (
+            Nurse.objects
+            .filter(
+                provider__is_active=True,
+                is_verified=True,
+                is_available=True
+            )
+            .select_related('provider', 'current_location')
+        )
+
+        nurses_within_radius = []
+
+        for nurse in nurses_with_location:
+            try:
+                # Get nurse's current location
+                location = nurse.current_location
+                if not location or not location.is_active:
+                    continue
+
+                # Calculate distance
+                distance = NurseRequestService._calculate_distance(
+                    patient_latitude,
+                    patient_longitude,
+                    location.latitude,
+                    location.longitude
+                )
+
+                # Check if nurse is within service area and max distance
+                max_distance_allowed = min(max_distance_km, nurse.service_area_km)
+
+                if distance <= max_distance_allowed:
+                    nurses_within_radius.append((nurse, round(distance, 2)))
+
+            except NurseLocation.DoesNotExist:
+                # Nurse hasn't submitted location yet
+                continue
+
+        # Sort by distance (closest first)
+        nurses_within_radius.sort(key=lambda x: x[1])
+
+        return nurses_within_radius
+
+    @staticmethod
     def get_nearby_nurses(request_obj, radius_km=10):
         """
         Find available nurses in the same city.
         In production, this would use geospatial queries.
+
+        DEPRECATED: Use get_nurses_within_radius instead.
         """
         nurses = Provider.objects.filter(
             provider_type='NURSE',
@@ -73,7 +166,7 @@ class NurseRequestService:
             # TODO: Add availability check
             # TODO: Add city/location filtering based on GPS
         )
-        
+
         # For now, filter by city name
         # In production, use PostGIS or similar for distance calculations
         return nurses
@@ -83,6 +176,7 @@ class NurseRequestService:
     def nurse_accept_request(request_obj, nurse, **offer_data):
         """
         Nurse accepts the request at the patient's offered price.
+        Auto-calculates distance if not provided.
         nurse: Nurse model instance
         """
         # Check if nurse already has an offer (NurseOffer.nurse is FK to Provider)
@@ -90,10 +184,25 @@ class NurseRequestService:
             request=request_obj,
             nurse=nurse.provider
         ).first()
-        
+
         if existing_offer:
             raise ValueError("You have already responded to this request")
-        
+
+        # Auto-calculate distance if not provided
+        if not offer_data.get('distance_km'):
+            try:
+                location = nurse.current_location
+                if location and location.is_active:
+                    distance = NurseRequestService._calculate_distance(
+                        request_obj.latitude,
+                        request_obj.longitude,
+                        location.latitude,
+                        location.longitude
+                    )
+                    offer_data['distance_km'] = round(distance, 2)
+            except NurseLocation.DoesNotExist:
+                pass  # Location not set, leave distance as None
+
         # Create offer at patient's price (NurseOffer.nurse is FK to Provider)
         offer = NurseOffer.objects.create(
             request=request_obj,
@@ -102,12 +211,12 @@ class NurseRequestService:
             status=OfferStatus.PENDING,
             **offer_data
         )
-        
+
         # Update request status
         if request_obj.status == RequestStatus.SEARCHING:
             request_obj.status = RequestStatus.NURSE_RESPONDED
             request_obj.save()
-        
+
         # Log action (Nurse.provider.user is the User instance)
         RequestHistory.objects.create(
             request=request_obj,
@@ -116,10 +225,11 @@ class NurseRequestService:
             details={
                 'nurse_id': nurse.id,
                 'nurse_name': f"{nurse.first_name} {nurse.last_name}".strip() or nurse.provider.user.email,
-                'offered_price': str(offer.offered_price)
+                'offered_price': str(offer.offered_price),
+                'distance_km': str(offer.distance_km) if offer.distance_km else 'N/A'
             }
         )
-        
+
         return offer
 
     @staticmethod
@@ -127,6 +237,7 @@ class NurseRequestService:
     def nurse_counter_offer(request_obj, nurse, offered_price, **offer_data):
         """
         Nurse makes a counter offer with a higher price.
+        Auto-calculates distance if not provided.
         nurse: Nurse model instance
         """
         # Check if nurse already has an offer (NurseOffer.nurse is FK to Provider)
@@ -134,10 +245,25 @@ class NurseRequestService:
             request=request_obj,
             nurse=nurse.provider
         ).first()
-        
+
         if existing_offer:
             raise ValueError("You have already responded to this request")
-        
+
+        # Auto-calculate distance if not provided
+        if not offer_data.get('distance_km'):
+            try:
+                location = nurse.current_location
+                if location and location.is_active:
+                    distance = NurseRequestService._calculate_distance(
+                        request_obj.latitude,
+                        request_obj.longitude,
+                        location.latitude,
+                        location.longitude
+                    )
+                    offer_data['distance_km'] = round(distance, 2)
+            except NurseLocation.DoesNotExist:
+                pass  # Location not set, leave distance as None
+
         # Create counter offer (NurseOffer.nurse is FK to Provider)
         offer = NurseOffer.objects.create(
             request=request_obj,
@@ -146,12 +272,12 @@ class NurseRequestService:
             status=OfferStatus.COUNTER_OFFERED,
             **offer_data
         )
-        
+
         # Update request status
         if request_obj.status == RequestStatus.SEARCHING:
             request_obj.status = RequestStatus.NURSE_RESPONDED
             request_obj.save()
-        
+
         # Log action (Nurse.provider.user is the User instance)
         RequestHistory.objects.create(
             request=request_obj,
@@ -161,10 +287,11 @@ class NurseRequestService:
                 'nurse_id': nurse.id,
                 'nurse_name': f"{nurse.first_name} {nurse.last_name}".strip() or nurse.provider.user.email,
                 'offered_price': str(offer.offered_price),
-                'patient_price': str(request_obj.patient_offered_price)
+                'patient_price': str(request_obj.patient_offered_price),
+                'distance_km': str(offer.distance_km) if offer.distance_km else 'N/A'
             }
         )
-        
+
         return offer
 
     @staticmethod

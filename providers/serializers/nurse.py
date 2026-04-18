@@ -2,7 +2,7 @@
 Nurse serializers.
 """
 from rest_framework import serializers
-from providers.models.nurse import Nurse, NurseCertification
+from providers.models.nurse import Nurse, NurseCertification, NurseLocation
 from providers.serializers.status import ProviderStatusSerializer
 
 
@@ -171,3 +171,21 @@ class NursePublicSerializer(serializers.ModelSerializer):
             } for ns in nurse_services]
         except Exception:
             return []
+
+
+class NurseLocationSerializer(serializers.ModelSerializer):
+    """Serializer for Nurse real-time location tracking."""
+
+    class Meta:
+        model = NurseLocation
+        fields = [
+            'id',
+            'latitude',
+            'longitude',
+            'accuracy_meters',
+            'is_active',
+            'updated_at',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'updated_at', 'created_at']
+

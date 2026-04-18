@@ -116,15 +116,18 @@ class NurseRequestNotifier:
         Broadcast to nurses when a patient creates a new request.
 
         - City-wide WS broadcast so all online nurses see it
-        - No in-app notification per nurse (too noisy) — WS only
+        - FCM notifications to nearby nurses (within 30km)
+        - No in-app notification per nurse (too noisy) — WS only for city broadcast
         """
+        from .services import NurseRequestService
+
         data = cls._serialize_request(request_obj)
         ws_data = {
             'request': data,
             'message': f'New nursing request: {request_obj.service.title}',
         }
 
-        # Broadcast to city channel
+        # Broadcast to city channel (WebSocket for online nurses)
         cls._ws_to_city(request_obj.city, 'nurse_request_new', ws_data)
 
         # Also push to the request-specific group
@@ -132,6 +135,52 @@ class NurseRequestNotifier:
 
         # Notify the patient too (confirmation)
         cls._ws_to_patient(request_obj, 'nurse_request_new', ws_data)
+
+        # Find and notify nearby nurses via FCM
+        try:
+            nearby_nurses = NurseRequestService.get_nurses_within_radius(
+                patient_latitude=request_obj.latitude,
+                patient_longitude=request_obj.longitude,
+                max_distance_km=30
+            )
+
+            for nurse, distance_km in nearby_nurses:
+                try:
+                    nurse_user = nurse.provider.user
+                    patient_name = request_obj.get_patient_display_name()
+
+                    # Prepare FCM notification data
+                    fcm_data = {
+                        'request_id': str(request_obj.pk),
+                        'service_title': request_obj.service.title,
+                        'patient_name': patient_name,
+                        'patient_offered_price': str(request_obj.patient_offered_price),
+                        'distance_km': str(round(distance_km, 2)),
+                        'city': request_obj.city,
+                        'notification_type': 'nurse_request_new',
+                    }
+
+                    # Send FCM push notification
+                    NotificationService.send_to_user(
+                        user=nurse_user,
+                        title='📍 New Nursing Request Nearby',
+                        body=(
+                            f'{patient_name} needs {request_obj.service.title} '
+                            f'at {request_obj.patient_offered_price:.2f} DZD '
+                            f'({distance_km:.1f} km away)'
+                        ),
+                        data=fcm_data,
+                        image_url=None,
+                    )
+
+                except Exception as e:
+                    logger.warning(f'Failed to send FCM to nurse {nurse.id}: {e}')
+                    continue
+
+        except Exception as e:
+            logger.error(f'Error finding/notifying nearby nurses: {e}')
+            # Don't fail the request creation if nearby nurse discovery fails
+            pass
 
     @classmethod
     def notify_nurse_offer(cls, request_obj, offer):
