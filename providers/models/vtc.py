@@ -32,6 +32,7 @@ class VTC(models.Model):
         unique=True,
         db_index=True,
         blank=True,
+        null=True,
         help_text='Transport license number (unique)'
     )
     

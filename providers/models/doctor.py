@@ -68,6 +68,7 @@ class Doctor(models.Model):
         unique=True,
         db_index=True,
         blank=True,
+        null=True,
         help_text='Medical license number (unique)'
     )
     years_of_experience = models.PositiveIntegerField(

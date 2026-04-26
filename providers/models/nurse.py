@@ -57,6 +57,7 @@ class Nurse(models.Model):
         unique=True,
         db_index=True,
         blank=True,
+        null=True,
         help_text='Nursing license number (unique)'
     )
     certification = models.CharField(

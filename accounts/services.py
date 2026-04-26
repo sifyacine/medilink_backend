@@ -33,11 +33,16 @@ def _ensure_provider_subtype(provider, provider_type, extra_data):
         if hasattr(provider, 'doctor_profile'):
             return provider.doctor_profile
 
+        # Convert empty strings to None for license_number to avoid unique constraint violation
+        license_number = extra_data.get('license_number', '')
+        if not license_number or license_number.strip() == '':
+            license_number = None
+
         return Doctor.objects.create(
             provider=provider,
             first_name=extra_data.get('first_name', ''),
             last_name=extra_data.get('last_name', ''),
-            license_number=extra_data.get('license_number', ''),
+            license_number=license_number,
             degree_document=extra_data.get('degree_document'),
         )
 
@@ -47,12 +52,17 @@ def _ensure_provider_subtype(provider, provider_type, extra_data):
         if hasattr(provider, 'nurse_profile'):
             return provider.nurse_profile
 
+        # Convert empty strings to None for license_number to avoid unique constraint violation
+        license_number = extra_data.get('license_number', '')
+        if not license_number or license_number.strip() == '':
+            license_number = None
+
         return Nurse.objects.create(
             provider=provider,
             first_name=extra_data.get('first_name', ''),
             last_name=extra_data.get('last_name', ''),
             phone_number=extra_data.get('phone_number', ''),
-            license_number=extra_data.get('license_number', ''),
+            license_number=license_number,
             degree_document=extra_data.get('degree_document'),
             entrepreneur_card_front=extra_data.get('entrepreneur_card_front'),
             entrepreneur_card_back=extra_data.get('entrepreneur_card_back'),
@@ -65,10 +75,15 @@ def _ensure_provider_subtype(provider, provider_type, extra_data):
         if hasattr(provider, 'clinic_profile'):
             return provider.clinic_profile
 
+        # Convert empty strings to None for license_number to avoid unique constraint violation
+        license_number = extra_data.get('license_number', '')
+        if not license_number or license_number.strip() == '':
+            license_number = None
+
         return Clinic.objects.create(
             provider=provider,
             clinic_name=extra_data.get('clinic_name', ''),
-            license_number=extra_data.get('license_number', ''),
+            license_number=license_number,
             license_document=extra_data.get('degree_document'),
         )
 
@@ -78,10 +93,15 @@ def _ensure_provider_subtype(provider, provider_type, extra_data):
         if hasattr(provider, 'laboratory_profile'):
             return provider.laboratory_profile
 
+        # Convert empty strings to None for license_number to avoid unique constraint violation
+        license_number = extra_data.get('license_number', '')
+        if not license_number or license_number.strip() == '':
+            license_number = None
+
         return Laboratory.objects.create(
             provider=provider,
             lab_name=extra_data.get('lab_name', ''),
-            license_number=extra_data.get('license_number', ''),
+            license_number=license_number,
             license_document=extra_data.get('degree_document'),
         )
 
@@ -104,10 +124,15 @@ def _ensure_provider_subtype(provider, provider_type, extra_data):
         if hasattr(provider, 'vtc_profile'):
             return provider.vtc_profile
 
+        # Convert empty strings to None for license_number to avoid unique constraint violation
+        license_number = extra_data.get('license_number', '')
+        if not license_number or license_number.strip() == '':
+            license_number = None
+
         return VTC.objects.create(
             provider=provider,
             company_name=extra_data.get('company_name', ''),
-            license_number=extra_data.get('license_number', ''),
+            license_number=license_number,
             transport_license=extra_data.get('degree_document'),
         )
 

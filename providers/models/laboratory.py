@@ -31,6 +31,7 @@ class Laboratory(models.Model):
         unique=True,
         db_index=True,
         blank=True,
+        null=True,
         help_text='Laboratory license number (unique)'
     )
     accreditation = models.CharField(

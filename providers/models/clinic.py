@@ -31,6 +31,7 @@ class Clinic(models.Model):
         unique=True,
         db_index=True,
         blank=True,
+        null=True,
         help_text='Clinic license number (unique)'
     )
     
