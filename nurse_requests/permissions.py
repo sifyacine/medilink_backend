@@ -19,16 +19,32 @@ class IsPatient(permissions.BasePermission):
 class IsNurse(permissions.BasePermission):
     """
     Permission to check if user is a nurse provider.
+    Checks both provider_profile existence and provider_type.
     """
     message = "Only nurse providers can perform this action."
 
     def has_permission(self, request, view):
-        return (
-            request.user and
-            request.user.is_authenticated and
-            hasattr(request.user, 'provider_profile') and
-            request.user.provider_profile.provider_type == 'NURSE'
-        )
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Check if user has a provider_profile
+        if not hasattr(request.user, 'provider_profile'):
+            self.message = "User does not have a provider profile. Please contact support."
+            return False
+        
+        provider = request.user.provider_profile
+        
+        # Check if provider_type is NURSE
+        if provider.provider_type != 'NURSE':
+            self.message = f"User is a {provider.provider_type} provider, not a nurse provider."
+            return False
+        
+        # Check if nurse_profile exists
+        if not hasattr(provider, 'nurse_profile'):
+            self.message = "Nurse profile not found. Please contact support."
+            return False
+        
+        return True
 
 
 class IsRequestOwner(permissions.BasePermission):
