@@ -1,13 +1,15 @@
 """
 Views for Medical Records app.
 """
+from datetime import timedelta
+
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
-from django.http import HttpResponse
 from django.db import models
+from django.http import HttpResponse
 from django.utils import timezone
 
 from accounts.models import User
@@ -29,6 +31,7 @@ from medical_record.serializers import (
     MedicalRecordNoteSerializer,
     ProviderAccessSerializer,
     ProviderAccessCreateSerializer,
+    MedicalRecordAccessLogSerializer,
 )
 from medical_record.permissions import (
     IsPatientOwnerOrAuthorizedProvider,
@@ -41,248 +44,219 @@ from medical_record.permissions import (
 from medical_record.services import MedicalRecordPDFService
 
 
+def _get_client_ip(request):
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        return x_forwarded_for.split(',')[0]
+    return request.META.get('REMOTE_ADDR')
+
+
+def _valid_access_q():
+    """Return a Q that filters ProviderAccess to non-expired active grants."""
+    now = timezone.now()
+    return models.Q(is_active=True) & (
+        models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=now)
+    )
+
+
 class MedicalRecordViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for medical records.
-    
-    Provides CRUD operations with proper permission enforcement.
+    Full CRUD for medical records with role-based filtering.
+
+    Patients: own records only.
+    Approved providers: records of patients they have a valid (non-expired) ProviderAccess grant for,
+                        plus records they created themselves.
+    Admins: all records.
+
+    Confidentiality: providers with LIMITED access cannot see records marked is_confidential=True.
     """
-    queryset = MedicalRecord.objects.all()
-    permission_classes = [
-        IsAuthenticated,
-        IsPatientOwnerOrAuthorizedProvider,
-        CanCreateMedicalRecord,
-        CanModifyMedicalRecord,
-    ]
+    permission_classes = [IsAuthenticated, IsPatientOwnerOrAuthorizedProvider, CanCreateMedicalRecord, CanModifyMedicalRecord]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['record_type', 'is_active', 'requires_followup', 'patient', 'patient_record']
+    filterset_fields = ['record_type', 'is_active', 'requires_followup', 'severity_level', 'folder_name']
     search_fields = ['title', 'description', 'symptoms', 'diagnosis_code']
-    ordering_fields = ['record_date', 'created_at', 'updated_at']
+    ordering_fields = ['record_date', 'created_at', 'updated_at', 'severity_level']
     ordering = ['-record_date', '-created_at']
-    
+
     def get_serializer_class(self):
-        """Return appropriate serializer based on action."""
         if self.action == 'list':
             return MedicalRecordListSerializer
-        elif self.action == 'create':
+        if self.action == 'create':
             return MedicalRecordCreateSerializer
-        elif self.action in ['update', 'partial_update']:
+        if self.action in ['update', 'partial_update']:
             return MedicalRecordUpdateSerializer
         return MedicalRecordDetailSerializer
-    
-    def get_queryset(self):
-        """Filter queryset based on user role."""
-        queryset = super().get_queryset()
-        
-        # Patients can only see their own records
-        if self.request.user.role == UserRole.PATIENT:
-            queryset = queryset.filter(
-                models.Q(patient=self.request.user) |
-                models.Q(patient_record__linked_user=self.request.user)
-            )
-        
-        # Providers can see records of patients they have access to
-        elif self.request.user.role == UserRole.PROVIDER:
-            try:
-                provider = self.request.user.provider_profile
-                # Get patients this provider has access to
-                authorized_patient_ids = ProviderAccess.objects.filter(
-                    provider=provider,
-                    is_active=True
-                ).values_list('patient_id', flat=True)
 
-                # Legacy patient-record access grants (used by appointment/nurse request workflows)
-                from patients.models import ProviderPatientAccess
-                authorized_patient_record_ids = ProviderPatientAccess.objects.filter(
-                    provider=provider
-                ).values_list('patient_record_id', flat=True)
-                
-                # Also include records they created
-                queryset = queryset.filter(
-                    models.Q(patient_id__in=authorized_patient_ids) |
-                    models.Q(patient_record_id__in=authorized_patient_record_ids) |
-                    models.Q(patient_record__linked_user_id__in=authorized_patient_ids) |
-                    models.Q(created_by=self.request.user)
-                ).distinct()
+    def get_queryset(self):
+        user = self.request.user
+        base_qs = MedicalRecord.objects.select_related(
+            'patient', 'patient_record', 'created_by', 'updated_by',
+        ).prefetch_related('prescription', 'allergy', 'attachments', 'notes')
+
+        if user.role == UserRole.PATIENT:
+            return base_qs.filter(
+                models.Q(patient=user) |
+                models.Q(patient_record__linked_user=user)
+            )
+
+        if user.role == UserRole.PROVIDER:
+            try:
+                provider = user.provider_profile
             except Exception:
-                queryset = queryset.filter(created_by=self.request.user)
-        
-        # Admins can see all records
-        # (no filtering needed)
-        
-        return queryset.select_related(
-            'patient',
-            'patient_record',
-            'created_by',
-            'updated_by'
-        ).prefetch_related(
-            'prescription',
-            'allergy',
-            'attachments',
-            'notes'
-        )
-    
+                return base_qs.none()
+
+            now = timezone.now()
+            valid_access = _valid_access_q()
+
+            # Patient IDs the provider has any valid access to
+            authorized_patient_ids = ProviderAccess.objects.filter(
+                valid_access, provider=provider,
+            ).values_list('patient_id', flat=True)
+
+            # Patient IDs with LIMITED access (confidential records excluded)
+            limited_patient_ids = ProviderAccess.objects.filter(
+                valid_access, provider=provider, access_type='LIMITED',
+            ).values_list('patient_id', flat=True)
+
+            # Legacy ProviderPatientAccess (no expiry)
+            from patients.models import ProviderPatientAccess
+            authorized_pr_ids = ProviderPatientAccess.objects.filter(
+                provider=provider
+            ).values_list('patient_record_id', flat=True)
+
+            qs = base_qs.filter(
+                models.Q(patient_id__in=authorized_patient_ids) |
+                models.Q(patient_record_id__in=authorized_pr_ids) |
+                models.Q(patient_record__linked_user_id__in=authorized_patient_ids) |
+                models.Q(created_by=user)
+            ).distinct()
+
+            # Exclude confidential records for LIMITED access patients
+            qs = qs.exclude(
+                models.Q(patient_id__in=limited_patient_ids, is_confidential=True) |
+                models.Q(patient_record__linked_user_id__in=limited_patient_ids, is_confidential=True)
+            )
+
+            return qs
+
+        # Admins see everything
+        return base_qs
+
     def perform_create(self, serializer):
-        """Create medical record."""
         serializer.save()
-    
+
     def retrieve(self, request, *args, **kwargs):
-        """Retrieve medical record and log access."""
         instance = self.get_object()
-        
-        # Log access
-        from medical_record.models import MedicalRecordAccessLog
         MedicalRecordAccessLog.objects.create(
             medical_record=instance,
             accessed_by=request.user,
             access_type='VIEW',
-            ip_address=self._get_client_ip()
+            ip_address=_get_client_ip(request),
         )
-        
-        serializer = self.get_serializer(instance)
-        return Response(serializer.data)
-    
+        return Response(self.get_serializer(instance).data)
+
     def destroy(self, request, *args, **kwargs):
-        """Soft delete medical record (set is_active=False)."""
         instance = self.get_object()
-        
-        # Check delete permission
-        from medical_record.permissions import CanDeleteMedicalRecord
-        permission = CanDeleteMedicalRecord()
-        if not permission.has_object_permission(request, self, instance):
+        perm = CanDeleteMedicalRecord()
+        if not perm.has_object_permission(request, self, instance):
             return Response(
                 {'error': 'You do not have permission to delete this record.'},
-                status=status.HTTP_403_FORBIDDEN
+                status=status.HTTP_403_FORBIDDEN,
             )
-        
-        # Soft delete
         instance.is_active = False
-        instance.save()
-        
-        # Log access
-        from medical_record.models import MedicalRecordAccessLog
+        instance.save(update_fields=['is_active'])
         MedicalRecordAccessLog.objects.create(
             medical_record=instance,
             accessed_by=request.user,
             access_type='DELETE',
-            ip_address=self._get_client_ip()
+            ip_address=_get_client_ip(request),
         )
-        
-        return Response(
-            {'message': 'Medical record has been deactivated.'},
-            status=status.HTTP_200_OK
-        )
-    
-    @action(detail=True, methods=['post'], url_path='attachments')
-    def add_attachment(self, request, pk=None):
-        """Add attachment to medical record."""
-        medical_record = self.get_object()
-        
-        serializer = MedicalRecordAttachmentSerializer(
-            data=request.data,
-            context={'request': request}
-        )
-        
-        if serializer.is_valid():
-            serializer.save(
-                medical_record=medical_record,
-                uploaded_by=request.user
+        return Response({'message': 'Medical record deactivated.'}, status=status.HTTP_200_OK)
+
+    # ------------------------------------------------------------------
+    # Attachment & note sub-actions
+    # ------------------------------------------------------------------
+
+    @action(detail=True, methods=['post', 'get'], url_path='attachments')
+    def attachments(self, request, pk=None):
+        """GET list / POST upload attachment on a medical record."""
+        record = self.get_object()
+        if request.method == 'GET':
+            return Response(
+                MedicalRecordAttachmentSerializer(
+                    record.attachments.all(), many=True, context={'request': request}
+                ).data
             )
+        serializer = MedicalRecordAttachmentSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            serializer.save(medical_record=record, uploaded_by=request.user)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    @action(detail=True, methods=['post'], url_path='notes')
-    def add_note(self, request, pk=None):
-        """Add note to medical record."""
-        medical_record = self.get_object()
-        
-        serializer = MedicalRecordNoteSerializer(
-            data=request.data,
-            context={'request': request}
-        )
-        
-        if serializer.is_valid():
-            note = serializer.save(
-                medical_record=medical_record,
-                created_by=request.user
+
+    @action(detail=True, methods=['post', 'get'], url_path='notes')
+    def notes(self, request, pk=None):
+        """GET list / POST add note on a medical record."""
+        record = self.get_object()
+        if request.method == 'GET':
+            return Response(
+                MedicalRecordNoteSerializer(
+                    record.notes.all(), many=True, context={'request': request}
+                ).data
             )
-            
-            # Lock provider notes automatically
+        serializer = MedicalRecordNoteSerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            note = serializer.save(medical_record=record, created_by=request.user)
             if request.user.role == UserRole.PROVIDER:
                 note.note_type = 'PROVIDER'
                 note.is_locked = True
-                note.save()
-            
-            return Response(
-                MedicalRecordNoteSerializer(note).data,
-                status=status.HTTP_201_CREATED
-            )
-        
+                note.save(update_fields=['note_type', 'is_locked'])
+            return Response(MedicalRecordNoteSerializer(note).data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
+    @action(detail=True, methods=['get'], url_path='access-logs')
+    def access_logs(self, request, pk=None):
+        """
+        Return the access audit trail for a single record.
+        Only the owning patient or admins may view this.
+
+        GET /api/medical-records/records/{id}/access-logs/
+        """
+        record = self.get_object()
+        if request.user.role not in (UserRole.PATIENT, UserRole.ADMIN):
+            return Response(
+                {'error': 'Only patients and admins can view access logs.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        logs = record.access_logs.select_related('accessed_by').order_by('-accessed_at')
+        return Response(MedicalRecordAccessLogSerializer(logs, many=True).data)
+
+    # ------------------------------------------------------------------
+    # Patient-scoped views
+    # ------------------------------------------------------------------
+
     @action(detail=False, methods=['get'], url_path='my-records')
     def my_records(self, request):
-        """Get current user's medical records (for patients)."""
+        """Patient's own records, paginated."""
         if request.user.role != UserRole.PATIENT:
             return Response(
-                {'error': 'This endpoint is only available for patients.'},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': 'This endpoint is only for patients.'},
+                status=status.HTTP_403_FORBIDDEN,
             )
-        
-        queryset = self.get_queryset()
-        page = self.paginate_queryset(queryset)
-        
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
-    
-    @action(detail=False, methods=['get'], url_path='patient/(?P<patient_id>[^/.]+)')
-    def patient_records(self, request, patient_id=None):
-        """Get medical records for a specific patient (for providers/admins)."""
-        if request.user.role == UserRole.PATIENT:
-            return Response(
-                {'error': 'Patients can only access their own records.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        try:
-            patient = User.objects.get(id=patient_id, role=UserRole.PATIENT)
-        except User.DoesNotExist:
-            return Response(
-                {'error': 'Patient not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        queryset = self.get_queryset().filter(
-            models.Q(patient=patient) |
-            models.Q(patient_record__linked_user=patient)
-        )
-        page = self.paginate_queryset(queryset)
-        
-        if page is not None:
-            serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        qs = self.get_queryset().filter(is_active=True)
+        page = self.paginate_queryset(qs)
+        serializer = MedicalRecordListSerializer(page or qs, many=True, context={'request': request})
+        return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
 
     @action(detail=False, methods=['get'], url_path='my-health-data')
     def my_health_data(self, request):
         """
-        Return a consolidated health-data bundle for the authenticated patient.
-
-        Includes medical records, prescriptions, appointments, nurse requests,
-        and provider access grants so patients can verify full history.
-        Also includes organized records by timeline, diagnosis, and severity.
+        Consolidated health-data bundle for the authenticated patient.
+        Includes medical records (grouped), prescriptions, appointments,
+        nurse requests, and provider access grants.
         """
         if request.user.role != UserRole.PATIENT:
             return Response(
-                {'error': 'This endpoint is only available for patients.'},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': 'This endpoint is only for patients.'},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         user = request.user
@@ -290,23 +264,19 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
 
         from prescriptions.models import Prescription as RxPrescription
         prescriptions_qs = RxPrescription.objects.filter(
-            models.Q(patient=user) |
-            models.Q(patient_record__linked_user=user)
+            models.Q(patient=user) | models.Q(patient_record__linked_user=user)
         ).select_related('doctor', 'clinic', 'appointment').prefetch_related('items').order_by('-created_at')
 
         from appointments.models import Appointment
         appointments_qs = Appointment.objects.filter(
-            models.Q(patient_user=user) |
-            models.Q(patient_record__linked_user=user)
+            models.Q(patient_user=user) | models.Q(patient_record__linked_user=user)
         ).select_related('provider').order_by('-appointment_date', '-created_at')
 
         from nurse_requests.models import NurseServiceRequest
         nurse_requests_qs = NurseServiceRequest.objects.filter(
-            models.Q(patient_user=user) |
-            models.Q(patient_record__linked_user=user)
+            models.Q(patient_user=user) | models.Q(patient_record__linked_user=user)
         ).select_related('service', 'accepted_nurse').order_by('-created_at')
 
-        from medical_record.models import ProviderAccess
         provider_access_qs = ProviderAccess.objects.filter(patient=user).select_related('provider__user').order_by('-granted_at')
 
         from patients.models import ProviderPatientAccess
@@ -314,69 +284,20 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
             patient_record__linked_user=user
         ).select_related('provider__user', 'patient_record').order_by('-created_at')
 
-        # Organize records
-        records_data = [
-            {
-                'id': r.id,
-                'title': r.title,
-                'record_type': r.record_type,
-                'record_date': r.record_date,
-                'description': r.description,
-                'diagnosis_code': r.diagnosis_code,
-                'symptoms': r.symptoms,
-                'is_confidential': r.is_confidential,
-                'requires_followup': r.requires_followup,
-                'followup_date': r.followup_date,
-                'created_at': r.created_at,
-                'updated_at': r.updated_at,
-                'folder_name': r.folder_name,
-                'severity_level': r.severity_level,
-                'sequence_number': r.sequence_number,
-            }
-            for r in records_qs
-        ]
+        records_data = MedicalRecordListSerializer(records_qs, many=True, context={'request': request}).data
 
-        # GROUP BY TIMELINE (recent first)
-        timeline_records = sorted(records_data, key=lambda x: x['record_date'], reverse=True)
-
-        # GROUP BY DIAGNOSIS
-        by_diagnosis = {}
-        for record in records_data:
-            key = record['diagnosis_code'] or record['record_type']
-            if key not in by_diagnosis:
-                by_diagnosis[key] = {'diagnosis': key, 'count': 0, 'records': [], 'most_recent': None}
-            by_diagnosis[key]['count'] += 1
-            by_diagnosis[key]['records'].append(record)
-            if by_diagnosis[key]['most_recent'] is None or record['record_date'] > by_diagnosis[key]['most_recent']['record_date']:
-                by_diagnosis[key]['most_recent'] = record
-
-        # GROUP BY SEVERITY
-        by_severity = {
-            'CRITICAL': [],
-            'HIGH': [],
-            'MEDIUM': [],
-            'LOW': [],
-            'INFO': [],
-        }
-        for record in records_data:
-            severity = record.get('severity_level', 'MEDIUM')
-            by_severity[severity].append(record)
-
-        # GROUP BY FOLDER
-        by_folder = {}
-        for record in records_data:
-            folder = record.get('folder_name') or 'Uncategorized'
-            if folder not in by_folder:
-                by_folder[folder] = []
-            by_folder[folder].append(record)
-
-        # RECENT RECORDS (30 days)
-        from datetime import timedelta
         thirty_days_ago = timezone.now().date() - timedelta(days=30)
-        recent_records = [r for r in records_data if r['record_date'] >= thirty_days_ago]
+        recent = [r for r in records_data if r['record_date'] and r['record_date'] >= str(thirty_days_ago)]
+        critical = [r for r in records_data if r.get('severity_level') in ('CRITICAL', 'HIGH')]
+        pending_followups = [r for r in records_data if r.get('requires_followup') and r.get('followup_date')]
 
-        # CRITICAL/HIGH PRIORITY
-        critical_records = [r for r in records_data if r['severity_level'] in ['CRITICAL', 'HIGH']]
+        by_type = {}
+        by_folder = {}
+        for r in records_data:
+            rt = r['record_type']
+            by_type.setdefault(rt, []).append(r)
+            folder = r.get('folder_name') or 'Uncategorized'
+            by_folder.setdefault(folder, []).append(r)
 
         prescriptions_data = [
             {
@@ -428,55 +349,28 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
             for r in nurse_requests_qs
         ]
 
-        provider_access_data = [
-            {
-                'id': a.id,
-                'provider_id': str(a.provider.id),
-                'provider_email': a.provider.user.email if a.provider and a.provider.user else None,
-                'access_type': a.access_type,
-                'is_active': a.is_active,
-                'expires_at': a.expires_at,
-                'granted_at': a.granted_at,
-                'source': 'medical_record.ProviderAccess',
-            }
-            for a in provider_access_qs
-        ] + [
-            {
-                'id': a.id,
-                'provider_id': str(a.provider.id),
-                'provider_email': a.provider.user.email if a.provider and a.provider.user else None,
-                'access_type': a.access_level,
-                'is_active': True,
-                'expires_at': None,
-                'granted_at': a.created_at,
-                'source': 'patients.ProviderPatientAccess',
-            }
-            for a in legacy_access_qs
-        ]
+        provider_access_data = ProviderAccessSerializer(provider_access_qs, many=True).data
 
         return Response({
             'generated_at': timezone.now(),
-            'patient': {
-                'id': str(user.id),
-                'email': user.email,
-            },
+            'patient': {'id': str(user.id), 'email': user.email},
             'summary': {
-                'medical_records': len(records_data),
-                'critical_or_high_priority': len(critical_records),
-                'recent_30_days': len(recent_records),
+                'total_records': len(records_data),
+                'critical_or_high': len(critical),
+                'recent_30_days': len(recent),
+                'pending_followups': len(pending_followups),
                 'prescriptions': len(prescriptions_data),
                 'appointments': len(appointments_data),
                 'nurse_requests': len(nurse_requests_data),
                 'provider_access_grants': len(provider_access_data),
             },
             'medical_records': {
-                'all': records_data,
-                'by_timeline': timeline_records,
-                'by_diagnosis': list(by_diagnosis.values()),
-                'by_severity': by_severity,
+                'timeline': records_data,
+                'by_type': by_type,
                 'by_folder': by_folder,
-                'recent_30_days': recent_records,
-                'critical_or_high_priority': critical_records,
+                'recent_30_days': recent,
+                'critical_or_high_priority': critical,
+                'pending_followups': pending_followups,
             },
             'prescriptions': prescriptions_data,
             'appointments': appointments_data,
@@ -484,221 +378,339 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
             'provider_access': provider_access_data,
         })
 
-    
-    def _get_client_ip(self):
-        """Get client IP address from request."""
-        x_forwarded_for = self.request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0]
-        return self.request.META.get('REMOTE_ADDR')
-    
+    # ------------------------------------------------------------------
+    # Provider-scoped views
+    # ------------------------------------------------------------------
+
+    @action(detail=False, methods=['get'], url_path=r'patient/(?P<patient_id>[^/.]+)')
+    def patient_records(self, request, patient_id=None):
+        """
+        Paginated list of medical records for a specific patient.
+        For providers and admins only. Providers must have a valid access grant.
+        """
+        if request.user.role == UserRole.PATIENT:
+            return Response(
+                {'error': 'Patients can only access their own records.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            patient = User.objects.get(id=patient_id, role=UserRole.PATIENT)
+        except User.DoesNotExist:
+            return Response({'error': 'Patient not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Verify the provider actually has access before returning records
+        if request.user.role == UserRole.PROVIDER:
+            try:
+                provider = request.user.provider_profile
+            except Exception:
+                return Response({'error': 'Provider profile not found.'}, status=status.HTTP_403_FORBIDDEN)
+            if not has_provider_access(provider, patient=patient):
+                return Response(
+                    {'error': 'You do not have access to this patient\'s records.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        qs = self.get_queryset().filter(
+            models.Q(patient=patient) |
+            models.Q(patient_record__linked_user=patient)
+        )
+        page = self.paginate_queryset(qs)
+        serializer = MedicalRecordListSerializer(page or qs, many=True, context={'request': request})
+        return self.get_paginated_response(serializer.data) if page is not None else Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path=r'patient-folder/(?P<patient_id>[^/.]+)')
+    def patient_folder(self, request, patient_id=None):
+        """
+        Full structured medical folder for a specific patient.
+        For approved providers with a valid access grant, and admins.
+
+        Returns:
+        - Patient demographics (from PatientRecord if available)
+        - Records grouped by type, folder, and severity
+        - Active allergies and current prescriptions highlighted
+        - Pending follow-ups
+        - Recent activity (last 30 days)
+
+        GET /api/medical-records/records/patient-folder/{patient_id}/
+        """
+        if request.user.role == UserRole.PATIENT:
+            return Response(
+                {'error': 'Use /my-health-data for your own health folder.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            patient = User.objects.get(id=patient_id, role=UserRole.PATIENT)
+        except User.DoesNotExist:
+            return Response({'error': 'Patient not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        access_type = None
+        if request.user.role == UserRole.PROVIDER:
+            try:
+                provider = request.user.provider_profile
+            except Exception:
+                return Response({'error': 'Provider profile not found.'}, status=status.HTTP_403_FORBIDDEN)
+
+            access_grant = ProviderAccess.objects.filter(
+                _valid_access_q(), provider=provider, patient=patient,
+            ).first()
+
+            if not access_grant:
+                # Also accept legacy ProviderPatientAccess
+                from patients.models import ProviderPatientAccess
+                try:
+                    pr = patient.patient_record
+                    ProviderPatientAccess.objects.get(provider=provider, patient_record=pr)
+                    access_type = 'READ_ONLY'
+                except Exception:
+                    return Response(
+                        {'error': 'You do not have access to this patient\'s medical folder.'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+            else:
+                access_type = access_grant.access_type
+
+        # Fetch all active records the requesting user can see (respects confidential filtering)
+        records_qs = self.get_queryset().filter(
+            models.Q(patient=patient) | models.Q(patient_record__linked_user=patient),
+            is_active=True,
+        ).order_by('-record_date', '-created_at')
+
+        records_data = MedicalRecordDetailSerializer(records_qs, many=True, context={'request': request}).data
+
+        # Patient demographics from linked PatientRecord if it exists
+        patient_info = {'id': str(patient.id), 'email': patient.email}
+        try:
+            pr = patient.patient_record
+            patient_info.update({
+                'full_name': pr.full_name,
+                'date_of_birth': pr.date_of_birth,
+                'age': pr.age,
+                'gender': pr.gender,
+                'blood_type': pr.blood_type,
+                'known_allergies': pr.known_allergies,
+                'chronic_conditions': pr.chronic_conditions,
+                'current_medications': pr.current_medications,
+                'emergency_contact_name': pr.emergency_contact_name,
+                'emergency_contact_phone': pr.emergency_contact_phone,
+                'patient_unique_id': pr.patient_unique_id,
+            })
+        except Exception:
+            pass
+
+        # Group by record type
+        by_type = {}
+        by_folder = {}
+        active_allergies = []
+        pending_followups = []
+        thirty_days_ago = timezone.now().date() - timedelta(days=30)
+        recent_records = []
+
+        for r in records_data:
+            rt = r.get('record_type')
+            by_type.setdefault(rt, []).append(r)
+
+            folder = r.get('folder_name') or 'General'
+            by_folder.setdefault(folder, []).append(r)
+
+            if rt == 'ALLERGY' and r.get('allergy'):
+                active_allergies.append(r)
+
+            if r.get('requires_followup') and r.get('followup_date'):
+                pending_followups.append(r)
+
+            if r.get('record_date') and r['record_date'] >= str(thirty_days_ago):
+                recent_records.append(r)
+
+        critical_records = [r for r in records_data if r.get('severity_level') in ('CRITICAL', 'HIGH')]
+
+        return Response({
+            'generated_at': timezone.now(),
+            'access_type': access_type,
+            'patient': patient_info,
+            'summary': {
+                'total_records': len(records_data),
+                'active_allergies': len(active_allergies),
+                'pending_followups': len(pending_followups),
+                'critical_or_high': len(critical_records),
+                'recent_30_days': len(recent_records),
+                'record_types': {k: len(v) for k, v in by_type.items()},
+            },
+            'medical_records': {
+                'timeline': records_data,
+                'by_type': by_type,
+                'by_folder': by_folder,
+                'critical_or_high': critical_records,
+                'recent_30_days': recent_records,
+                'pending_followups': pending_followups,
+            },
+            'active_allergies': active_allergies,
+        })
+
+    # ------------------------------------------------------------------
+    # PDF export
+    # ------------------------------------------------------------------
+
     @action(detail=True, methods=['get'], url_path='export-pdf')
     def export_pdf(self, request, pk=None):
-        """
-        Export a single medical record as PDF.
-        
-        GET /api/medical-records/{id}/export-pdf/
-        
-        Query params:
-            include_attachments: bool - Include attachment list (default: false)
-        """
-        medical_record = self.get_object()
-        
-        # Check if PDF service is available
+        """Export a single medical record as PDF."""
+        record = self.get_object()
         if not MedicalRecordPDFService.is_available():
             return Response(
-                {'error': 'PDF generation is not available. Install reportlab package.'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
+                {'error': 'PDF generation is not available. Install reportlab.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        
         include_attachments = request.query_params.get('include_attachments', 'false').lower() == 'true'
-        
         try:
-            # Generate PDF
             pdf_buffer = MedicalRecordPDFService.generate_single_record_pdf(
-                medical_record,
-                include_attachments=include_attachments
+                record, include_attachments=include_attachments
             )
-            
-            # Log access
             MedicalRecordAccessLog.objects.create(
-                medical_record=medical_record,
+                medical_record=record,
                 accessed_by=request.user,
                 access_type='PDF_EXPORT',
-                ip_address=self._get_client_ip()
+                ip_address=_get_client_ip(request),
             )
-            
-            # Return PDF response
             response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
-            filename = f"medical_record_{medical_record.id}_{medical_record.record_date}.pdf"
-            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            response['Content-Disposition'] = f'attachment; filename="medical_record_{record.id}_{record.record_date}.pdf"'
             return response
-            
         except Exception as e:
-            return Response(
-                {'error': f'Failed to generate PDF: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
+            return Response({'error': f'Failed to generate PDF: {e}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=False, methods=['get'], url_path='export-summary')
     def export_summary(self, request):
-        """
-        Export all medical records as a summary PDF.
-        Only for patients to export their own records.
-        
-        GET /api/medical-records/export-summary/
-        """
+        """Export all of the patient's active records as a summary PDF."""
         if request.user.role != UserRole.PATIENT:
             return Response(
                 {'error': 'Only patients can export their own medical record summary.'},
-                status=status.HTTP_403_FORBIDDEN
+                status=status.HTTP_403_FORBIDDEN,
             )
-        
         if not MedicalRecordPDFService.is_available():
             return Response(
-                {'error': 'PDF generation is not available. Install reportlab package.'},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE
+                {'error': 'PDF generation is not available. Install reportlab.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        
         try:
-            # Get patient's records
             records = MedicalRecord.objects.filter(
-                models.Q(patient=request.user) |
-                models.Q(patient_record__linked_user=request.user),
-                is_active=True
-            ).select_related('created_by').prefetch_related(
-                'prescription', 'allergy'
-            ).order_by('-record_date')
-            
-            # Generate PDF
-            pdf_buffer = MedicalRecordPDFService.generate_patient_summary_pdf(
-                request.user,
-                records
-            )
-            
-            # Return PDF response
+                models.Q(patient=request.user) | models.Q(patient_record__linked_user=request.user),
+                is_active=True,
+            ).select_related('created_by').prefetch_related('prescription', 'allergy').order_by('-record_date')
+            pdf_buffer = MedicalRecordPDFService.generate_patient_summary_pdf(request.user, records)
             response = HttpResponse(pdf_buffer.read(), content_type='application/pdf')
-            filename = f"medical_records_summary_{request.user.id}.pdf"
-            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            response['Content-Disposition'] = f'attachment; filename="medical_records_summary_{request.user.id}.pdf"'
             return response
-            
         except Exception as e:
-            return Response(
-                {'error': f'Failed to generate PDF: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            return Response({'error': f'Failed to generate PDF: {e}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+# ---------------------------------------------------------------------------
+# Provider Access viewset
+# ---------------------------------------------------------------------------
 
 class ProviderAccessViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for managing provider access to patient records.
-    
-    Patients can grant/revoke access to their records.
-    Providers can view their access grants.
-    Admins can manage all access grants.
+    Manage provider access grants.
+
+    Patients: grant/revoke access to their records.
+    Providers: view their own grants.
+    Admins: full control.
+
+    POST  /api/medical-records/access/           - Grant access (or reactivate revoked grant)
+    GET   /api/medical-records/access/my-providers/ - Providers with access (patient)
+    GET   /api/medical-records/access/my-patients/  - Patients I can access (provider)
+    POST  /api/medical-records/access/{id}/revoke/  - Revoke access
+    POST  /api/medical-records/access/{id}/renew/   - Reactivate with optional new expiry
     """
     permission_classes = [IsAuthenticated, CanManageProviderAccess]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['is_active', 'access_type']
     ordering_fields = ['granted_at', 'expires_at']
     ordering = ['-granted_at']
-    
+
     def get_queryset(self):
-        """Return access grants based on user role."""
         user = self.request.user
-        
         if user.role == UserRole.ADMIN:
             return ProviderAccess.objects.all().select_related('patient', 'provider__user')
-        
         if user.role == UserRole.PATIENT:
             return ProviderAccess.objects.filter(patient=user).select_related('provider__user')
-        
         if user.role == UserRole.PROVIDER:
             try:
-                provider = user.provider_profile
-                return ProviderAccess.objects.filter(provider=provider).select_related('patient')
+                return ProviderAccess.objects.filter(
+                    provider=user.provider_profile
+                ).select_related('patient')
             except Exception:
                 return ProviderAccess.objects.none()
-        
         return ProviderAccess.objects.none()
-    
+
     def get_serializer_class(self):
         if self.action == 'create':
             return ProviderAccessCreateSerializer
         return ProviderAccessSerializer
-    
+
     def perform_create(self, serializer):
-        """Set access_granted_by when creating."""
         serializer.save(access_granted_by=self.request.user)
-    
+
     @action(detail=False, methods=['get'], url_path='my-providers')
     def my_providers(self, request):
-        """
-        Get list of providers who have access to patient's records.
-        Only for patients.
-        """
+        """All providers who have (or had) access to my records — patient only."""
         if request.user.role != UserRole.PATIENT:
-            return Response(
-                {'error': 'This endpoint is only for patients.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        accesses = ProviderAccess.objects.filter(
-            patient=request.user,
-            is_active=True
-        ).select_related('provider__user')
-        
-        serializer = ProviderAccessSerializer(accesses, many=True)
-        return Response(serializer.data)
-    
+            return Response({'error': 'This endpoint is for patients only.'}, status=status.HTTP_403_FORBIDDEN)
+        accesses = ProviderAccess.objects.filter(patient=request.user).select_related('provider__user')
+        return Response(ProviderAccessSerializer(accesses, many=True).data)
+
     @action(detail=False, methods=['get'], url_path='my-patients')
     def my_patients(self, request):
-        """
-        Get list of patients the provider has access to.
-        Only for providers.
-        """
+        """All patients I have active access to — provider only."""
         if request.user.role != UserRole.PROVIDER:
-            return Response(
-                {'error': 'This endpoint is only for providers.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
+            return Response({'error': 'This endpoint is for providers only.'}, status=status.HTTP_403_FORBIDDEN)
         try:
             provider = request.user.provider_profile
-            accesses = ProviderAccess.objects.filter(
-                provider=provider,
-                is_active=True
-            ).select_related('patient')
-            
-            serializer = ProviderAccessSerializer(accesses, many=True)
-            return Response(serializer.data)
         except Exception:
-            return Response(
-                {'error': 'Provider profile not found.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-    
-    @action(detail=True, methods=['post'], url_path='revoke')
+            return Response({'error': 'Provider profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        accesses = ProviderAccess.objects.filter(
+            _valid_access_q(), provider=provider,
+        ).select_related('patient')
+        return Response(ProviderAccessSerializer(accesses, many=True).data)
+
+    @action(detail=True, methods=['post'])
     def revoke(self, request, pk=None):
-        """Revoke provider access."""
+        """Revoke an active access grant."""
         access = self.get_object()
         access.is_active = False
-        access.save()
-        
+        access.save(update_fields=['is_active'])
         return Response({
-            'message': 'Provider access has been revoked.',
-            'access': ProviderAccessSerializer(access).data
+            'message': 'Provider access revoked.',
+            'access': ProviderAccessSerializer(access).data,
         })
-    
-    @action(detail=True, methods=['post'], url_path='renew')
+
+    @action(detail=True, methods=['post'])
     def renew(self, request, pk=None):
-        """Renew provider access (reactivate)."""
+        """
+        Reactivate a revoked grant, optionally setting a new expiry.
+        Body (optional): {"expires_at": "2026-12-31T00:00:00Z"}
+        """
         access = self.get_object()
         access.is_active = True
-        access.expires_at = None  # Remove expiration
-        access.save()
-        
+        new_expiry = request.data.get('expires_at')
+        if new_expiry:
+            try:
+                from django.utils.dateparse import parse_datetime
+                parsed = parse_datetime(new_expiry)
+                if parsed and parsed > timezone.now():
+                    access.expires_at = parsed
+                else:
+                    return Response(
+                        {'error': 'expires_at must be a valid future datetime.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            except Exception:
+                return Response({'error': 'Invalid expires_at format.'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            access.expires_at = None
+        access.granted_at = timezone.now()
+        access.save(update_fields=['is_active', 'expires_at', 'granted_at'])
         return Response({
-            'message': 'Provider access has been renewed.',
-            'access': ProviderAccessSerializer(access).data
+            'message': 'Provider access renewed.',
+            'access': ProviderAccessSerializer(access).data,
         })
