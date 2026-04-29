@@ -257,14 +257,17 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return False
-            
+
         from reviews.models import Review
+        from django.contrib.contenttypes.models import ContentType
+        from .models import Appointment as ApptModel
+        appointment_ct = ContentType.objects.get_for_model(ApptModel)
         has_review = Review.objects.filter(
             reviewer=request.user,
-            context_type='appointment',
-            context_id=str(obj.id)
+            context_content_type=appointment_ct,
+            context_object_id=str(obj.id)
         ).exists()
-        
+
         return not has_review
 
     def get_provider_name(self, obj):
