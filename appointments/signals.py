@@ -58,7 +58,14 @@ def handle_appointment_save(sender, instance, created, **kwargs):
         try:
             # Re-fetch the appointment so any deferred fields are available
             fresh = Appointment.objects.select_related(
-                'provider', 'provider__user', 'patient_user', 'patient_record',
+                'provider', 'provider__user',
+                'provider__doctor_profile',
+                'provider__nurse_profile',
+                'provider__clinic_profile',
+                'provider__laboratory_profile',
+                'provider__seller_profile',
+                'provider__vtc_profile',
+                'patient_user', 'patient_record',
                 'service', 'cancelled_by', 'created_by',
             ).prefetch_related(
                 'appointment_services__service',
