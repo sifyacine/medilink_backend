@@ -17,6 +17,7 @@ from admins.views import (
     AppointmentStatsView,
     RevenueStatsView,
     ProviderStatsView,
+    AdminSocialMediaLinkViewSet,
 )
 
 app_name = 'admins'
@@ -29,6 +30,7 @@ router.register(r'logs', AdminActivityLogViewSet, basename='admin-activity-logs'
 router.register(r'invoices', AdminInvoiceViewSet, basename='admin-invoices')
 router.register(r'products', MediLinkProductViewSet, basename='admin-products')
 router.register(r'income', MediLinkIncomeViewSet, basename='admin-income')
+router.register(r'social-links', AdminSocialMediaLinkViewSet, basename='admin-social-links')
 
 urlpatterns = [
     path('', include(router.urls)),

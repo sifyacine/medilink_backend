@@ -2,6 +2,9 @@
 from admins.serializers.provider_review import (
     ProviderListSerializer,
     ProviderRefuseSerializer,
+    ProviderSuspendSerializer,
+    AdminProviderDetailSerializer,
+    ProviderStatusHistorySerializer,
 )
 from admins.serializers.users import (
     AdminUserListSerializer,
@@ -40,6 +43,9 @@ from admins.serializers.public_products import (
 __all__ = [
     'ProviderListSerializer',
     'ProviderRefuseSerializer',
+    'ProviderSuspendSerializer',
+    'AdminProviderDetailSerializer',
+    'ProviderStatusHistorySerializer',
     'AdminUserListSerializer',
     'AdminUserDetailSerializer',
     'AdminUserUpdateSerializer',
