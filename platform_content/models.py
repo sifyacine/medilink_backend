@@ -358,3 +358,71 @@ class PlatformSocialLink(models.Model):
 
     def __str__(self):
         return f'{self.get_platform_display()}: {self.url}'
+
+
+# ---------------------------------------------------------------------------
+# Legal Documents  (Privacy Policy, Terms & Conditions — one row per type)
+# ---------------------------------------------------------------------------
+
+class LegalDocument(models.Model):
+    """
+    Singleton-per-type legal documents (Privacy Policy, Terms & Conditions, etc.)
+
+    Each document_type may have at most one row — enforced by ``unique=True``
+    on ``document_type``.  Use ``LegalDocument.objects.get_or_create(document_type=...)``
+    to retrieve or initialise.
+    """
+
+    class DocumentType(models.TextChoices):
+        PRIVACY_POLICY       = 'PRIVACY_POLICY',       'Privacy Policy'
+        TERMS_AND_CONDITIONS = 'TERMS_AND_CONDITIONS',  'Terms and Conditions'
+        COOKIE_POLICY        = 'COOKIE_POLICY',         'Cookie Policy'
+
+    document_type = models.CharField(
+        max_length=30,
+        choices=DocumentType.choices,
+        unique=True,
+        db_index=True,
+        help_text='Type of legal document — one row per type',
+    )
+
+    # Multilingual titles
+    title_en = models.CharField(max_length=300, blank=True)
+    title_ar = models.CharField(max_length=300, blank=True)
+    title_fr = models.CharField(max_length=300, blank=True)
+
+    # Multilingual body (supports Markdown / HTML — rendering left to frontend)
+    content_en = models.TextField(blank=True)
+    content_ar = models.TextField(blank=True)
+    content_fr = models.TextField(blank=True)
+
+    # Optional semantic version string (e.g. "1.0", "2024-04")
+    version = models.CharField(
+        max_length=30,
+        blank=True,
+        help_text='Optional version tag shown to users (e.g. "v1.2", "April 2026")',
+    )
+
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text='Whether this document is publicly visible',
+    )
+
+    updated_by = models.ForeignKey(
+        'accounts.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='updated_legal_documents',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'legal_documents'
+        verbose_name = 'Legal Document'
+        verbose_name_plural = 'Legal Documents'
+
+    def __str__(self):
+        return self.get_document_type_display()

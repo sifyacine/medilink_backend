@@ -1,7 +1,7 @@
 """
 Views for platform_content app.
 
-Admin views  – full CRUD, requires IsAuthenticated + IsContentEditor sub-role.
+Admin views  – full CRUD, requires IsAuthenticated + IsAdmin.
 Public views – read-only, AllowAny, returns only active/published content.
 """
 from django.db import models
@@ -19,6 +19,7 @@ from platform_content.models import (
     BlogPost,
     ContactInfo,
     PlatformSocialLink,
+    LegalDocument,
 )
 from platform_content.serializers import (
     AdminLandingPageSectionSerializer,
@@ -27,12 +28,14 @@ from platform_content.serializers import (
     AdminBlogPostSerializer,
     AdminContactInfoSerializer,
     AdminPlatformSocialLinkSerializer,
+    AdminLegalDocumentSerializer,
     PublicLandingPageSectionSerializer,
     PublicPlatformAnnouncementSerializer,
     PublicFAQSerializer,
     PublicBlogPostSerializer,
     PublicContactInfoSerializer,
     PublicPlatformSocialLinkSerializer,
+    PublicLegalDocumentSerializer,
 )
 from admins.permissions import IsContentEditor
 
@@ -71,7 +74,7 @@ class AdminPlatformAnnouncementViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsContentEditor]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['announcement_type', 'target_audience', 'is_active']
-    search_fields = ['title_en']
+    search_fields = ['title_en', 'title_ar', 'title_fr']
     ordering_fields = ['created_at', 'starts_at', 'ends_at']
 
     def perform_create(self, serializer):
@@ -80,32 +83,72 @@ class AdminPlatformAnnouncementViewSet(viewsets.ModelViewSet):
 
 class AdminFAQViewSet(viewsets.ModelViewSet):
     """
-    CRUD for FAQs.
-    GET/POST /api/admin/platform/faqs/
+    CRUD + bulk reorder for FAQs.
+
+    GET/POST  /api/admin/platform/faqs/
+    GET/PATCH/PUT/DELETE /api/admin/platform/faqs/{id}/
+    POST /api/admin/platform/faqs/reorder/
+         Body: [{"id": 3, "display_order": 0}, {"id": 1, "display_order": 1}, ...]
     """
     queryset = FAQ.objects.all()
     serializer_class = AdminFAQSerializer
     permission_classes = [IsAuthenticated, IsContentEditor]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['category', 'is_active']
-    search_fields = ['question_en', 'answer_en']
+    search_fields = ['question_en', 'question_ar', 'question_fr', 'answer_en']
     ordering_fields = ['display_order', 'created_at']
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
+    @action(detail=False, methods=['post'])
+    def reorder(self, request):
+        """
+        Bulk-update display_order for multiple FAQs in one request.
+
+        POST /api/admin/platform/faqs/reorder/
+        Body: [{"id": 3, "display_order": 0}, {"id": 1, "display_order": 1}]
+        """
+        items = request.data
+        if not isinstance(items, list):
+            return Response(
+                {'error': 'Expected a list of {id, display_order} objects.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        updated = []
+        errors = []
+        for item in items:
+            faq_id = item.get('id')
+            order = item.get('display_order')
+            if faq_id is None or order is None:
+                errors.append({'item': item, 'error': 'Both id and display_order are required.'})
+                continue
+            try:
+                faq = FAQ.objects.get(pk=faq_id)
+                faq.display_order = order
+                faq.save(update_fields=['display_order'])
+                updated.append(faq_id)
+            except FAQ.DoesNotExist:
+                errors.append({'item': item, 'error': f'FAQ {faq_id} not found.'})
+
+        return Response(
+            {'updated': updated, 'errors': errors},
+            status=status.HTTP_200_OK if not errors else status.HTTP_207_MULTI_STATUS,
+        )
+
 
 class AdminBlogPostViewSet(viewsets.ModelViewSet):
     """
-    CRUD + publish action for blog posts.
+    CRUD + publish/archive actions for blog posts.
     POST /api/admin/platform/posts/{id}/publish/
+    POST /api/admin/platform/posts/{id}/archive/
     """
     queryset = BlogPost.objects.all()
     serializer_class = AdminBlogPostSerializer
     permission_classes = [IsAuthenticated, IsContentEditor]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['status']
-    search_fields = ['title_en', 'tags', 'slug']
+    search_fields = ['title_en', 'title_ar', 'title_fr', 'tags', 'slug']
     ordering_fields = ['created_at', 'published_at']
 
     def perform_create(self, serializer):
@@ -160,6 +203,7 @@ class AdminPlatformSocialLinkViewSet(viewsets.ModelViewSet):
     """
     CRUD for platform social media links.
     GET/POST /api/admin/platform/social-links/
+    GET/PATCH/PUT/DELETE /api/admin/platform/social-links/{id}/
     """
     queryset = PlatformSocialLink.objects.all()
     serializer_class = AdminPlatformSocialLinkSerializer
@@ -167,6 +211,50 @@ class AdminPlatformSocialLinkViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_fields = ['platform', 'is_active']
     ordering_fields = ['display_order']
+
+
+class AdminLegalDocumentView(generics.RetrieveUpdateAPIView):
+    """
+    Retrieve or update a legal document by its type slug.
+
+    GET  /api/admin/platform/legal/privacy-policy/
+    PATCH /api/admin/platform/legal/privacy-policy/
+
+    GET  /api/admin/platform/legal/terms-and-conditions/
+    PATCH /api/admin/platform/legal/terms-and-conditions/
+
+    GET  /api/admin/platform/legal/cookie-policy/
+    PATCH /api/admin/platform/legal/cookie-policy/
+
+    The record is auto-created on first GET if it doesn't exist yet.
+    document_type is read-only — use the URL to select the document.
+    """
+    serializer_class = AdminLegalDocumentSerializer
+    permission_classes = [IsAuthenticated, IsContentEditor]
+
+    # Maps URL slug → DocumentType enum value
+    SLUG_TO_TYPE = {
+        'privacy-policy':       LegalDocument.DocumentType.PRIVACY_POLICY,
+        'terms-and-conditions': LegalDocument.DocumentType.TERMS_AND_CONDITIONS,
+        'cookie-policy':        LegalDocument.DocumentType.COOKIE_POLICY,
+    }
+
+    def _get_document_type(self):
+        slug = self.kwargs.get('doc_type', '')
+        doc_type = self.SLUG_TO_TYPE.get(slug)
+        if not doc_type:
+            from rest_framework.exceptions import NotFound
+            raise NotFound(f'Unknown legal document type: "{slug}". '
+                           f'Valid options: {list(self.SLUG_TO_TYPE.keys())}')
+        return doc_type
+
+    def get_object(self):
+        doc_type = self._get_document_type()
+        obj, _ = LegalDocument.objects.get_or_create(document_type=doc_type)
+        return obj
+
+    def perform_update(self, serializer):
+        serializer.save(updated_by=self.request.user)
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +265,7 @@ class PublicLandingPageSectionViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Public read-only landing page sections.
     GET /api/platform/sections/
-    GET /api/platform/sections/{section_key}/   (lookup by section_key)
+    GET /api/platform/sections/{section_key}/
     """
     queryset = LandingPageSection.objects.filter(is_active=True).order_by('display_order')
     serializer_class = PublicLandingPageSectionSerializer
@@ -188,7 +276,7 @@ class PublicLandingPageSectionViewSet(viewsets.ReadOnlyModelViewSet):
 class PublicPlatformAnnouncementViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Public active announcements, optionally filtered by audience.
-    GET /api/platform/announcements/?audience=PATIENTS
+    GET /api/platform/announcements/?target_audience=PATIENTS
     """
     permission_classes = [AllowAny]
     serializer_class = PublicPlatformAnnouncementSerializer
@@ -232,7 +320,7 @@ class PublicBlogPostViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [AllowAny]
     lookup_field = 'slug'
     filter_backends = [SearchFilter]
-    search_fields = ['title_en', 'tags']
+    search_fields = ['title_en', 'title_ar', 'title_fr', 'tags']
 
 
 class PublicContactInfoView(generics.RetrieveAPIView):
@@ -256,3 +344,35 @@ class PublicPlatformSocialLinkViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = PlatformSocialLink.objects.filter(is_active=True).order_by('display_order')
     serializer_class = PublicPlatformSocialLinkSerializer
     permission_classes = [AllowAny]
+
+
+class PublicLegalDocumentView(generics.RetrieveAPIView):
+    """
+    Public read-only view for a legal document by type slug.
+
+    GET /api/platform/legal/privacy-policy/
+    GET /api/platform/legal/terms-and-conditions/
+    GET /api/platform/legal/cookie-policy/
+
+    Returns 404 if the document hasn't been created yet or is inactive.
+    """
+    serializer_class = PublicLegalDocumentSerializer
+    permission_classes = [AllowAny]
+
+    SLUG_TO_TYPE = {
+        'privacy-policy':       LegalDocument.DocumentType.PRIVACY_POLICY,
+        'terms-and-conditions': LegalDocument.DocumentType.TERMS_AND_CONDITIONS,
+        'cookie-policy':        LegalDocument.DocumentType.COOKIE_POLICY,
+    }
+
+    def get_object(self):
+        slug = self.kwargs.get('doc_type', '')
+        doc_type = self.SLUG_TO_TYPE.get(slug)
+        if not doc_type:
+            from rest_framework.exceptions import NotFound
+            raise NotFound(f'Unknown document type: "{slug}".')
+        try:
+            return LegalDocument.objects.get(document_type=doc_type, is_active=True)
+        except LegalDocument.DoesNotExist:
+            from rest_framework.exceptions import NotFound
+            raise NotFound('This document has not been published yet.')
