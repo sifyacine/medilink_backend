@@ -1813,3 +1813,138 @@ class NurseRequestHistoryViewSet(viewsets.ReadOnlyModelViewSet):
             'success': True,
             'data': serializer.data
         })
+
+    @action(detail=True, methods=['get'], url_path='patient-folder')
+    def patient_folder(self, request, pk=None):
+        """
+        View the patient's medical folder for an accepted/in-progress/completed request.
+        Only the nurse who was accepted for the request may access this.
+        Returns non-confidential medical records plus key clinical demographics.
+
+        GET /api/nurse-requests/nurse/request-history/{id}/patient-folder/
+        """
+        try:
+            request_obj = self.get_object()
+        except Exception:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_FOUND,
+                'Request not found',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        nurse = self._get_nurse(request)
+        if not nurse or request_obj.accepted_nurse != nurse.provider:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_OWNER,
+                'You do not have permission to view this patient\'s medical folder',
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+
+        allowed_statuses = [
+            RequestStatus.ACCEPTED,
+            RequestStatus.IN_PROGRESS,
+            RequestStatus.COMPLETED,
+        ]
+        if request_obj.status not in allowed_statuses:
+            return error_response(
+                ErrorCodes.REQUEST_INVALID_STATUS,
+                'The patient\'s medical folder is only accessible for accepted or completed requests',
+                {'current_status': request_obj.status}
+            )
+
+        from medical_record.models import MedicalRecord, MedicalRecordAccessLog
+        from medical_record.serializers import MedicalRecordListSerializer
+        from django.db import models as db_models
+        from datetime import timedelta as _timedelta
+
+        patient_user = request_obj.patient_user
+        patient_record = request_obj.patient_record
+
+        if patient_user:
+            records_qs = MedicalRecord.objects.filter(
+                db_models.Q(patient=patient_user) |
+                db_models.Q(patient_record__linked_user=patient_user),
+                is_active=True,
+                is_confidential=False,
+            ).select_related('prescription', 'allergy').order_by('-record_date', '-created_at')
+        elif patient_record:
+            records_qs = MedicalRecord.objects.filter(
+                patient_record=patient_record,
+                is_active=True,
+                is_confidential=False,
+            ).select_related('prescription', 'allergy').order_by('-record_date', '-created_at')
+        else:
+            records_qs = MedicalRecord.objects.none()
+
+        # Log access for each record viewed
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        client_ip = x_forwarded_for.split(',')[0] if x_forwarded_for else request.META.get('REMOTE_ADDR')
+        for rec in records_qs:
+            try:
+                MedicalRecordAccessLog.objects.create(
+                    medical_record=rec,
+                    accessed_by=request.user,
+                    access_type='VIEW',
+                    ip_address=client_ip,
+                )
+            except Exception:
+                pass
+
+        # Clinical demographics
+        patient_info = {}
+        pr = patient_record
+        if pr is None and patient_user:
+            try:
+                pr = patient_user.patient_record
+            except Exception:
+                pass
+        if pr:
+            patient_info = {
+                'blood_type': pr.blood_type or 'UNKNOWN',
+                'known_allergies': pr.known_allergies or '',
+                'chronic_conditions': pr.chronic_conditions or '',
+                'current_medications': pr.current_medications or '',
+                'emergency_contact_name': pr.emergency_contact_name or '',
+                'emergency_contact_phone': pr.emergency_contact_phone or '',
+            }
+
+        records_data = MedicalRecordListSerializer(records_qs, many=True, context={'request': request}).data
+
+        by_type = {}
+        active_allergies = []
+        from django.utils import timezone as _tz
+        thirty_days_ago = _tz.now().date() - _timedelta(days=30)
+        recent_records = []
+
+        for r in records_data:
+            rt = r.get('record_type')
+            by_type.setdefault(rt, []).append(r)
+            if rt == 'ALLERGY':
+                active_allergies.append(r)
+            if r.get('record_date') and r['record_date'] >= str(thirty_days_ago):
+                recent_records.append(r)
+
+        critical_records = [r for r in records_data if r.get('severity_level') in ('CRITICAL', 'HIGH')]
+
+        return Response({
+            'success': True,
+            'data': {
+                'request_id': request_obj.id,
+                'access_note': 'Confidential records are excluded. Access is logged.',
+                'patient_clinical_info': patient_info,
+                'summary': {
+                    'total_records': len(records_data),
+                    'active_allergies': len(active_allergies),
+                    'critical_or_high': len(critical_records),
+                    'recent_30_days': len(recent_records),
+                    'record_types': {k: len(v) for k, v in by_type.items()},
+                },
+                'medical_records': {
+                    'timeline': records_data,
+                    'by_type': by_type,
+                    'active_allergies': active_allergies,
+                    'critical_or_high': critical_records,
+                    'recent_30_days': recent_records,
+                },
+            }
+        })

@@ -233,6 +233,97 @@ class MedicalRecordViewSet(viewsets.ModelViewSet):
     # Patient-scoped views
     # ------------------------------------------------------------------
 
+    @action(detail=False, methods=['get'], url_path='my-folder')
+    def my_folder(self, request):
+        """
+        Patient's own structured medical folder — mirrors the provider-facing
+        `patient-folder` view but scoped to the authenticated patient.
+
+        Returns patient demographics, records grouped by type/folder/severity,
+        active allergies, pending follow-ups, and recent activity.
+
+        GET /api/medical-records/records/my-folder/
+        """
+        if request.user.role != UserRole.PATIENT:
+            return Response(
+                {'error': 'This endpoint is only for patients.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        user = request.user
+        records_qs = self.get_queryset().filter(
+            is_active=True,
+        ).order_by('-record_date', '-created_at')
+
+        records_data = MedicalRecordDetailSerializer(records_qs, many=True, context={'request': request}).data
+
+        # Patient demographics from linked PatientRecord if available
+        patient_info = {'id': str(user.id), 'email': user.email}
+        try:
+            pr = user.patient_record
+            patient_info.update({
+                'full_name': pr.full_name,
+                'date_of_birth': pr.date_of_birth,
+                'age': pr.age,
+                'gender': pr.gender,
+                'blood_type': pr.blood_type,
+                'known_allergies': pr.known_allergies,
+                'chronic_conditions': pr.chronic_conditions,
+                'current_medications': pr.current_medications,
+                'emergency_contact_name': pr.emergency_contact_name,
+                'emergency_contact_phone': pr.emergency_contact_phone,
+                'patient_unique_id': pr.patient_unique_id,
+            })
+        except Exception:
+            pass
+
+        by_type = {}
+        by_folder = {}
+        active_allergies = []
+        pending_followups = []
+        thirty_days_ago = timezone.now().date() - timedelta(days=30)
+        recent_records = []
+
+        for r in records_data:
+            rt = r.get('record_type')
+            by_type.setdefault(rt, []).append(r)
+
+            folder = r.get('folder_name') or 'General'
+            by_folder.setdefault(folder, []).append(r)
+
+            if rt == 'ALLERGY' and r.get('allergy'):
+                active_allergies.append(r)
+
+            if r.get('requires_followup') and r.get('followup_date'):
+                pending_followups.append(r)
+
+            if r.get('record_date') and r['record_date'] >= str(thirty_days_ago):
+                recent_records.append(r)
+
+        critical_records = [r for r in records_data if r.get('severity_level') in ('CRITICAL', 'HIGH')]
+
+        return Response({
+            'generated_at': timezone.now(),
+            'patient': patient_info,
+            'summary': {
+                'total_records': len(records_data),
+                'active_allergies': len(active_allergies),
+                'pending_followups': len(pending_followups),
+                'critical_or_high': len(critical_records),
+                'recent_30_days': len(recent_records),
+                'record_types': {k: len(v) for k, v in by_type.items()},
+            },
+            'medical_records': {
+                'timeline': records_data,
+                'by_type': by_type,
+                'by_folder': by_folder,
+                'critical_or_high': critical_records,
+                'recent_30_days': recent_records,
+                'pending_followups': pending_followups,
+            },
+            'active_allergies': active_allergies,
+        })
+
     @action(detail=False, methods=['get'], url_path='my-records')
     def my_records(self, request):
         """Patient's own records, paginated."""

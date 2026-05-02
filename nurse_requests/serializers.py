@@ -218,16 +218,36 @@ class NurseServiceRequestDetailSerializer(serializers.ModelSerializer):
                 else:
                     profile['profile_image'] = np.profile_image.url
         
-        # Get rating
+        # Get rating and recent reviews
         try:
-            from reviews.models import get_review_aggregate
+            from reviews.models import get_review_aggregate, get_reviews_for_object
             aggregate = get_review_aggregate(nurse)
             profile['average_rating'] = float(aggregate.average_rating)
             profile['review_count'] = aggregate.review_count
+            profile['rating_distribution'] = {
+                1: aggregate.rating_1_count,
+                2: aggregate.rating_2_count,
+                3: aggregate.rating_3_count,
+                4: aggregate.rating_4_count,
+                5: aggregate.rating_5_count,
+            }
+            reviews = get_reviews_for_object(nurse)[:3]
+            profile['recent_reviews'] = [
+                {
+                    'id': str(r.id),
+                    'rating': r.rating,
+                    'text': r.text[:200] if r.text else '',
+                    'created_at': r.created_at.isoformat(),
+                    'has_response': bool(r.response),
+                }
+                for r in reviews
+            ]
         except Exception:
             profile['average_rating'] = 0.0
             profile['review_count'] = 0
-        
+            profile['rating_distribution'] = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+            profile['recent_reviews'] = []
+
         return profile
     
     def get_address_details(self, obj):
@@ -400,32 +420,79 @@ class NurseAvailableRequestSerializer(serializers.ModelSerializer):
     service_id = serializers.IntegerField(source='service.id', read_only=True)
     patient_name = serializers.SerializerMethodField()
     my_offer = serializers.SerializerMethodField()
-    
+    patient_rating = serializers.SerializerMethodField()
+    patient_review_count = serializers.SerializerMethodField()
+    patient_clinical_summary = serializers.SerializerMethodField()
+
     class Meta:
         model = NurseServiceRequest
         fields = [
             'id', 'service_id', 'service_name', 'service_description',
             'patient_name', 'patient_offered_price', 'base_price',
             'latitude', 'longitude', 'city', 'address_line',
-            'status', 'created_at', 'my_offer'
+            'status', 'created_at', 'my_offer',
+            'patient_rating', 'patient_review_count', 'patient_clinical_summary',
         ]
         read_only_fields = fields
-    
+
     def get_patient_name(self, obj):
-        # Optionally hide full patient name for privacy
         name = obj.get_patient_display_name()
         if name and len(name) > 1:
             parts = name.split()
             if len(parts) >= 2:
                 return f"{parts[0]} {parts[-1][0]}."
         return name
-    
+
+    def get_patient_rating(self, obj):
+        """Overall rating the patient has received from nurses."""
+        try:
+            from reviews.models import get_review_aggregate
+            patient_user = obj.get_patient_user()
+            if patient_user:
+                aggregate = get_review_aggregate(patient_user)
+                return float(aggregate.average_rating)
+        except Exception:
+            pass
+        return None
+
+    def get_patient_review_count(self, obj):
+        """Total number of reviews the patient has received."""
+        try:
+            from reviews.models import get_review_aggregate
+            patient_user = obj.get_patient_user()
+            if patient_user:
+                aggregate = get_review_aggregate(patient_user)
+                return aggregate.review_count
+        except Exception:
+            pass
+        return 0
+
+    def get_patient_clinical_summary(self, obj):
+        """
+        Basic clinical info needed before accepting care.
+        Only blood type, allergies, and chronic conditions — no confidential data.
+        """
+        pr = None
+        if obj.patient_record:
+            pr = obj.patient_record
+        elif obj.patient_user:
+            try:
+                pr = obj.patient_user.patient_record
+            except Exception:
+                pass
+        if pr:
+            return {
+                'blood_type': pr.blood_type or 'UNKNOWN',
+                'known_allergies': pr.known_allergies or '',
+                'chronic_conditions': pr.chronic_conditions or '',
+            }
+        return None
+
     def get_my_offer(self, obj):
         """Get the current nurse's offer if exists"""
         nurse = self.context.get('nurse')
         if nurse:
             try:
-                # NurseOffer.nurse is FK to Provider, not Nurse
                 offer = obj.offers.get(nurse=nurse.provider)
                 return NurseOfferSerializer(offer).data
             except NurseOffer.DoesNotExist:
@@ -618,6 +685,8 @@ class NurseRequestHistorySerializer(serializers.ModelSerializer):
     can_leave_review = serializers.SerializerMethodField()
     nurse_review = serializers.SerializerMethodField()
     patient_review = serializers.SerializerMethodField()
+    patient_overall_rating = serializers.SerializerMethodField()
+    patient_total_reviews = serializers.SerializerMethodField()
 
     class Meta:
         model = NurseServiceRequest
@@ -627,6 +696,7 @@ class NurseRequestHistorySerializer(serializers.ModelSerializer):
             'accepted_at', 'started_at', 'completed_at', 'cancelled_at',
             'cancellation_reason', 'city',
             'can_leave_review', 'nurse_review', 'patient_review',
+            'patient_overall_rating', 'patient_total_reviews',
             'created_at', 'updated_at'
         ]
         read_only_fields = fields
@@ -680,6 +750,30 @@ class NurseRequestHistorySerializer(serializers.ModelSerializer):
             return not exists
         except Exception:
             return False
+
+    def get_patient_overall_rating(self, obj):
+        """Patient's aggregate rating across all nurse requests."""
+        try:
+            from reviews.models import get_review_aggregate
+            patient_user = obj.get_patient_user()
+            if patient_user:
+                aggregate = get_review_aggregate(patient_user)
+                return float(aggregate.average_rating)
+        except Exception:
+            pass
+        return None
+
+    def get_patient_total_reviews(self, obj):
+        """Total number of reviews the patient has received from nurses."""
+        try:
+            from reviews.models import get_review_aggregate
+            patient_user = obj.get_patient_user()
+            if patient_user:
+                aggregate = get_review_aggregate(patient_user)
+                return aggregate.review_count
+        except Exception:
+            pass
+        return 0
 
     def get_nurse_review(self, obj):
         """Get review submitted by nurse to patient."""

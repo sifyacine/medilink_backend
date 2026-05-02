@@ -1181,3 +1181,127 @@ Patient creates request
 - [ ] Show "Complete service" button (calls `POST /patient/nurse-requests/{id}/complete/`) when status is `IN_PROGRESS`
 - [ ] Request history (`/nurse/request-history/`) shows anonymized patient names — this is intentional
 - [ ] `can_leave_review: true` in history detail means the nurse can review the patient
+- [ ] Available request cards now show `patient_rating`, `patient_review_count`, and `patient_clinical_summary` — use these to display patient reliability and key medical info
+- [ ] History detail includes `patient_overall_rating` and `patient_total_reviews` — show alongside this-request review
+- [ ] Use `GET /nurse/request-history/{id}/patient-folder/` to show the patient's non-confidential medical records during/after service (status must be ACCEPTED, IN_PROGRESS, or COMPLETED)
+
+---
+
+## 10. New Fields Reference (2025 Update)
+
+### 10.1 Available Request — Patient Info Fields
+
+Returned in each item of `GET /api/nurse-requests/nurse/available-requests/`.
+
+| Field | Type | Description |
+|---|---|---|
+| `patient_rating` | `float \| null` | Aggregate star rating this patient has received from past nurses. `null` if no reviews yet. |
+| `patient_review_count` | `int` | Total number of reviews the patient has received. |
+| `patient_clinical_summary` | `object \| null` | Basic clinical info required for safe care. `null` if no PatientRecord is linked. |
+| `patient_clinical_summary.blood_type` | `string` | e.g. `"A+"`, `"UNKNOWN"` |
+| `patient_clinical_summary.known_allergies` | `string` | Free-text allergy notes |
+| `patient_clinical_summary.chronic_conditions` | `string` | Free-text chronic conditions |
+
+**Sample:**
+```json
+{
+  "id": 42,
+  "service_name": "Wound Care",
+  "patient_name": "Amina B.",
+  "patient_offered_price": "750.00",
+  "patient_rating": 4.7,
+  "patient_review_count": 12,
+  "patient_clinical_summary": {
+    "blood_type": "O+",
+    "known_allergies": "Penicillin",
+    "chronic_conditions": "Type 2 Diabetes"
+  }
+}
+```
+
+---
+
+### 10.2 Request History — Patient Rating Fields
+
+Returned in each item of `GET /api/nurse-requests/nurse/request-history/`.
+
+| Field | Type | Description |
+|---|---|---|
+| `patient_overall_rating` | `float \| null` | Patient's overall aggregate rating. `null` if no reviews. |
+| `patient_total_reviews` | `int` | Total reviews the patient has ever received. |
+| `nurse_review` | `object \| null` | The review the nurse left for the patient **on this specific request**. |
+| `patient_review` | `object \| null` | The review the patient left for the nurse on this specific request. |
+
+---
+
+### 10.3 Accepted Nurse Profile — Full Rating Detail
+
+Returned in `accepted_nurse_profile` inside `GET /api/nurse-requests/patient/nurse-requests/{id}/`.
+
+| Field | Type | Description |
+|---|---|---|
+| `average_rating` | `float` | Nurse's average star rating |
+| `review_count` | `int` | Total reviews |
+| `rating_distribution` | `object` | Breakdown by star: `{1: N, 2: N, 3: N, 4: N, 5: N}` |
+| `recent_reviews` | `array` | Up to 3 most recent reviews with `id`, `rating`, `text`, `created_at`, `has_response` |
+
+---
+
+## 11. Patient Medical Folder (Nurse Access)
+
+### 11.1 View Patient Medical Folder
+
+```
+GET /api/nurse-requests/nurse/request-history/{id}/patient-folder/
+```
+
+**Auth:** Nurse only. The authenticated nurse must be the `accepted_nurse` on the request.  
+**Status requirement:** Request must be in `ACCEPTED`, `IN_PROGRESS`, or `COMPLETED` status.  
+**Privacy:** Confidential records (`is_confidential=true`) are **never** returned. All access is logged in `MedicalRecordAccessLog`.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "request_id": 42,
+    "access_note": "Confidential records are excluded. Access is logged.",
+    "patient_clinical_info": {
+      "blood_type": "O+",
+      "known_allergies": "Penicillin",
+      "chronic_conditions": "Type 2 Diabetes",
+      "current_medications": "Metformin 500mg",
+      "emergency_contact_name": "Karim Benali",
+      "emergency_contact_phone": "+213 555 123456"
+    },
+    "summary": {
+      "total_records": 8,
+      "active_allergies": 1,
+      "critical_or_high": 2,
+      "recent_30_days": 3,
+      "record_types": {
+        "DIAGNOSIS": 3,
+        "PRESCRIPTION": 2,
+        "ALLERGY": 1,
+        "LAB_RESULT": 2
+      }
+    },
+    "medical_records": {
+      "timeline": [ ... ],
+      "by_type": { ... },
+      "active_allergies": [ ... ],
+      "critical_or_high": [ ... ],
+      "recent_30_days": [ ... ]
+    }
+  }
+}
+```
+
+**Error cases:**
+
+| Code | Meaning |
+|---|---|
+| `NR3001` | Request not found |
+| `NR3002` | Nurse is not the accepted nurse on this request |
+| `NR3003` | Request is not in an allowed status (ACCEPTED/IN_PROGRESS/COMPLETED) |
+| `NR6004` | Nurse profile not found |
