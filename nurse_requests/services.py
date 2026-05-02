@@ -11,6 +11,7 @@ from .models import (
 )
 from providers.models import Provider, Nurse
 from providers.models.nurse import NurseLocation
+from common.enums import ProviderStatus
 
 
 class NurseRequestService:
@@ -109,15 +110,15 @@ class NurseRequestService:
         Returns:
             List of tuples: [(Nurse object, distance_km), ...]
         """
-        # Get all active, verified, available nurses with current location
+        # Get all approved, available nurses with their current location
         nurses_with_location = (
             Nurse.objects
             .filter(
-                provider__is_active=True,
-                is_verified=True,
-                is_available=True
+                provider__user__is_active=True,
+                provider__status=ProviderStatus.APPROVED,
+                is_available=True,
             )
-            .select_related('provider', 'current_location')
+            .select_related('provider__user', 'current_location')
         )
 
         nurses_within_radius = []
