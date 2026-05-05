@@ -255,6 +255,13 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Frontend URL (used in password reset emails)
+FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:3000')
+
+# Email (overridden per environment)
+EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='MediLink <no-reply@medilink.dz>')
+
 
 # Django Channels Configuration
 ASGI_APPLICATION = 'core.asgi.application'

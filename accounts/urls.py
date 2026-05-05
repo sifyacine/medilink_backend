@@ -9,6 +9,7 @@ from accounts.views import (
     patient_register,
     provider_register,
     get_my_profile,
+    change_password,
     check_account_status,
 )
 
@@ -37,6 +38,7 @@ urlpatterns = [
     
     # Profile self-management (GET, PATCH, PUT on same endpoint)
     path('me/', get_my_profile, name='me'),
+    path('me/change-password/', change_password, name='change-password'),
 
     # Public account status check by email
     path('status/', check_account_status, name='check-account-status'),

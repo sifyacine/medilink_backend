@@ -247,6 +247,40 @@ class ProviderRegisterSerializer(serializers.Serializer):
         return attrs
 
 
+class ChangePasswordSerializer(serializers.Serializer):
+    """Serializer for authenticated password change (old password required)."""
+    old_password = serializers.CharField(write_only=True, required=True)
+    new_password = serializers.CharField(
+        write_only=True,
+        required=True,
+        validators=[validate_password]
+    )
+    new_password_confirm = serializers.CharField(write_only=True, required=True)
+
+    def validate_old_password(self, value):
+        user = self.context['request'].user
+        if not user.check_password(value):
+            raise serializers.ValidationError('Current password is incorrect.')
+        return value
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['new_password_confirm']:
+            raise serializers.ValidationError({
+                'new_password_confirm': 'New passwords do not match.'
+            })
+        if attrs['old_password'] == attrs['new_password']:
+            raise serializers.ValidationError({
+                'new_password': 'New password must be different from the current password.'
+            })
+        return attrs
+
+    def save(self):
+        user = self.context['request'].user
+        user.set_password(self.validated_data['new_password'])
+        user.save(update_fields=['password'])
+        return user
+
+
 class CustomRegisterSerializer(serializers.Serializer):
     """
     Custom registration serializer for dj-rest-auth compatibility.

@@ -10,6 +10,7 @@ from accounts.serializers.profile import (
     UserProfileSerializer,
     UserProfileUpdateSerializer,
 )
+from accounts.serializers.auth import ChangePasswordSerializer
 
 
 @api_view(['GET', 'PATCH'])
@@ -74,3 +75,26 @@ def get_my_profile(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def change_password(request):
+    """
+    Change password for the authenticated user.
+
+    POST /api/auth/me/change-password/
+
+    Request body:
+    {
+        "old_password": "currentSecret123",
+        "new_password": "newSecret456!",
+        "new_password_confirm": "newSecret456!"
+    }
+
+    Response 200:
+    { "detail": "Password changed successfully." }
+    """
+    serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
+    if serializer.is_valid():
+        serializer.save()
+        return Response({'detail': 'Password changed successfully.'}, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
