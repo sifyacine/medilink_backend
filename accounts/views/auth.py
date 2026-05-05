@@ -121,10 +121,14 @@ def login(request):
             
     # Check if account is locked (brute force protection)
     if user.is_locked():
+        from django.utils import timezone as _tz
+        remaining = user.locked_until - _tz.now()
+        minutes_left = int(remaining.total_seconds() // 60) + 1
         return Response(
             {
                 'error': 'Account temporarily locked due to multiple failed login attempts.',
-                'message': 'Please try again later or contact support.'
+                'message': f'Please try again in {minutes_left} minute{"s" if minutes_left != 1 else ""}.',
+                'retry_after_minutes': minutes_left,
             },
             status=status.HTTP_423_LOCKED
         )

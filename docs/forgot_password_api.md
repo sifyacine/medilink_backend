@@ -219,3 +219,87 @@ sudo systemctl restart gunicorn   # or your process manager
 - The token expires after **24 hours** (Django default: `PASSWORD_RESET_TIMEOUT = 259200` seconds / 3 days; overridden to 24 h by the token generator checking `last_login`).
 - On success, **all existing auth tokens are revoked** — the user must log in again.
 - The request endpoint always returns the same response whether or not the email exists, preventing user enumeration attacks.
+
+---
+
+## 3. Change Password (Authenticated)
+
+For logged-in users who want to change their password from within their profile. Requires the current password.
+
+**Endpoint**
+
+```
+POST /api/auth/me/change-password/
+```
+
+**Request headers**
+
+```
+Content-Type: application/json
+Authorization: Token <user-token>
+```
+
+**Request body**
+
+```json
+{
+  "old_password": "currentSecret123",
+  "new_password": "newSecret456!",
+  "new_password_confirm": "newSecret456!"
+}
+```
+
+| Field                  | Type   | Required | Description                              |
+|------------------------|--------|----------|------------------------------------------|
+| `old_password`         | string | yes      | The user's current password              |
+| `new_password`         | string | yes      | New password (validated by Django rules) |
+| `new_password_confirm` | string | yes      | Must match `new_password`                |
+
+**Success response — 200 OK**
+
+```json
+{
+  "detail": "Password changed successfully."
+}
+```
+
+**Error responses — 400 Bad Request**
+
+```json
+{ "old_password": ["Current password is incorrect."] }
+```
+
+```json
+{ "new_password_confirm": ["New passwords do not match."] }
+```
+
+```json
+{ "new_password": ["New password must be different from the current password."] }
+```
+
+```json
+{ "new_password": ["This password is too short. It must contain at least 8 characters."] }
+```
+
+**Frontend integration**
+
+```js
+// POST /api/auth/me/change-password/
+const response = await fetch('https://dzmedilink.duckdns.org/api/auth/me/change-password/', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Token ${userToken}`,
+  },
+  body: JSON.stringify({ old_password, new_password, new_password_confirm }),
+});
+
+if (response.ok) {
+  // Show success message; optionally redirect to login
+} else {
+  const errors = await response.json();
+  // Display field-level errors to the user
+}
+```
+
+> **Note:** Unlike the forgot-password flow, this endpoint does **not** revoke existing tokens — the user stays logged in after a successful change.

@@ -405,7 +405,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
         return True
 
-    def record_failed_login(self, max_attempts: int = 5, lock_minutes: int = 30) -> None:
+    def record_failed_login(self, max_attempts: int = 10, lock_minutes: int = 30) -> None:
         """Record a failed login attempt and lock the account if needed.
 
         Behaviour (as per documentation):
