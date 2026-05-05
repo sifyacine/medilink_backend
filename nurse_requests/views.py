@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,9 +11,12 @@ from django.contrib.contenttypes.models import ContentType
 from .models import (
     NurseServiceRequest,
     NurseOffer,
+    RequestHistory,
     RequestStatus,
     OfferStatus
 )
+
+logger = logging.getLogger(__name__)
 from services.models import Service, ServiceType, NurseService
 from address.models import Address
 from .serializers import (
@@ -485,25 +490,27 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
                 serializer.errors
             )
         
+        # Capture before the service mutates the object
+        old_status = request_obj.status
+
         try:
             updated_request = NurseRequestService.patient_accept_offer(
                 request_obj=request_obj,
                 offer_id=serializer.validated_data['offer_id']
             )
-            
-            # Send signal for real-time update
+
             request_status_changed.send(
                 sender=self.__class__,
                 request=updated_request,
-                old_status=RequestStatus.NURSE_RESPONDED,
-                new_status=updated_request.status
+                old_status=old_status,
+                new_status=updated_request.status,
             )
-            
+
             response_serializer = NurseServiceRequestDetailSerializer(updated_request)
             return Response({
                 'success': True,
                 'data': response_serializer.data,
-                'message': 'Offer accepted! The nurse will be on their way.'
+                'message': 'Offer accepted! The nurse will be on their way.',
             })
         except ValueError as e:
             return error_response(
@@ -554,26 +561,28 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
         
         serializer = CancelRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
+        # Capture before the service mutates the object
+        old_status = request_obj.status
+
         try:
             updated_request = NurseRequestService.cancel_request(
                 request_obj=request_obj,
                 reason=serializer.validated_data.get('cancellation_reason', '')
             )
-            
-            # Send signal for real-time update
+
             request_status_changed.send(
                 sender=self.__class__,
                 request=updated_request,
-                old_status=request_obj.status,
-                new_status=RequestStatus.CANCELLED
+                old_status=old_status,
+                new_status=RequestStatus.CANCELLED,
             )
-            
+
             response_serializer = NurseServiceRequestDetailSerializer(updated_request)
             return Response({
                 'success': True,
                 'data': response_serializer.data,
-                'message': 'Request cancelled successfully'
+                'message': 'Request cancelled successfully',
             })
         except ValueError as e:
             return error_response(
@@ -581,76 +590,6 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
                 str(e)
             )
     
-    @action(detail=True, methods=['post'])
-    def start(self, request, pk=None):
-        """Mark service as started (called by nurse or admin)"""
-        try:
-            request_obj = self.get_object()
-        except Exception:
-            return error_response(
-                ErrorCodes.REQUEST_NOT_FOUND,
-                'Request not found',
-                status_code=status.HTTP_404_NOT_FOUND
-            )
-        
-        try:
-            old_status = request_obj.status
-            updated_request = NurseRequestService.start_service(request_obj)
-
-            request_status_changed.send(
-                sender=self.__class__,
-                request=updated_request,
-                old_status=old_status,
-                new_status=updated_request.status,
-            )
-
-            response_serializer = NurseServiceRequestDetailSerializer(updated_request)
-            return Response({
-                'success': True,
-                'data': response_serializer.data,
-                'message': 'Service started'
-            })
-        except ValueError as e:
-            return error_response(
-                ErrorCodes.REQUEST_INVALID_STATUS,
-                str(e)
-            )
-    
-    @action(detail=True, methods=['post'])
-    def complete(self, request, pk=None):
-        """Mark service as completed (called by nurse or admin)"""
-        try:
-            request_obj = self.get_object()
-        except Exception:
-            return error_response(
-                ErrorCodes.REQUEST_NOT_FOUND,
-                'Request not found',
-                status_code=status.HTTP_404_NOT_FOUND
-            )
-        
-        try:
-            old_status = request_obj.status
-            updated_request = NurseRequestService.complete_service(request_obj)
-
-            request_status_changed.send(
-                sender=self.__class__,
-                request=updated_request,
-                old_status=old_status,
-                new_status=updated_request.status,
-            )
-
-            response_serializer = NurseServiceRequestDetailSerializer(updated_request)
-            return Response({
-                'success': True,
-                'data': response_serializer.data,
-                'message': 'Service completed successfully'
-            })
-        except ValueError as e:
-            return error_response(
-                ErrorCodes.REQUEST_INVALID_STATUS,
-                str(e)
-            )
-
     @action(detail=True, methods=['post'])
     def decline_offer(self, request, pk=None):
         """
@@ -745,16 +684,12 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
             }
         )
 
-        # Send notification to nurse about the decline
-        from .signals import request_status_changed as status_signal
-
-        # Trigger notification for offer decline
+        # Notify the nurse that their offer was declined
         try:
             from .notifications import NurseRequestNotifier
             NurseRequestNotifier.notify_offer_declined(request_obj, offer.nurse, reason)
         except Exception as e:
-            logger_instance = __import__('logging').getLogger(__name__)
-            logger_instance.error(f"Failed to send decline notification: {e}")
+            logger.error("Failed to send decline notification: %s", e)
 
         response_serializer = NurseServiceRequestDetailSerializer(request_obj)
         return Response({
@@ -1507,22 +1442,24 @@ class NurseAvailableRequestsViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         """
-        Reject the request.
-        
+        Dismiss a request without submitting an offer.
+        The request is removed from this nurse's available list on subsequent
+        fetches. Other nurses are unaffected.
+
         Body (optional):
         {
             "reason": "Too far from my location"
         }
         """
         nurse = self._get_nurse(request)
-        
+
         if not nurse:
             return error_response(
                 ErrorCodes.NURSE_PROFILE_NOT_FOUND,
                 'Nurse profile not found',
                 status_code=status.HTTP_404_NOT_FOUND
             )
-        
+
         try:
             request_obj = NurseServiceRequest.objects.get(pk=pk)
         except NurseServiceRequest.DoesNotExist:
@@ -1531,18 +1468,38 @@ class NurseAvailableRequestsViewSet(viewsets.ReadOnlyModelViewSet):
                 'Request not found',
                 status_code=status.HTTP_404_NOT_FOUND
             )
-        
+
+        # Only allow rejection while the request is still open for nurse responses
+        if request_obj.status not in [RequestStatus.SEARCHING, RequestStatus.NURSE_RESPONDED]:
+            return error_response(
+                ErrorCodes.REQUEST_INVALID_STATUS,
+                f'This request is no longer available (status: {request_obj.status})',
+                {'current_status': request_obj.status}
+            )
+
+        # Prevent double-response (nurse already submitted an accept or counter-offer)
+        existing = NurseOffer.objects.filter(
+            request=request_obj,
+            nurse=nurse.provider
+        ).exclude(status=OfferStatus.REJECTED).first()
+
+        if existing:
+            return error_response(
+                ErrorCodes.OFFER_ALREADY_SUBMITTED,
+                'You have already submitted an offer for this request'
+            )
+
         reason = request.data.get('reason', '')
-        
+
         NurseRequestService.nurse_reject_request(
             request_obj=request_obj,
             nurse=nurse,
-            reason=reason
+            reason=reason,
         )
-        
+
         return Response({
             'success': True,
-            'message': 'Request rejected'
+            'message': 'Request dismissed',
         }, status=status.HTTP_200_OK)
 
 
@@ -1813,6 +1770,112 @@ class NurseRequestHistoryViewSet(viewsets.ReadOnlyModelViewSet):
             'success': True,
             'data': serializer.data
         })
+
+    @action(detail=True, methods=['post'])
+    def start(self, request, pk=None):
+        """
+        Nurse marks the service as started (IN_PROGRESS).
+
+        POST /api/nurse-requests/nurse/request-history/{id}/start/
+
+        Requirements:
+        - Authenticated nurse must be the accepted_nurse on the request.
+        - Request must be in ACCEPTED status.
+        """
+        nurse = self._get_nurse(request)
+        if not nurse:
+            return error_response(
+                ErrorCodes.NURSE_PROFILE_NOT_FOUND,
+                'Nurse profile not found',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            request_obj = self.get_object()
+        except Exception:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_FOUND,
+                'Request not found',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        if request_obj.accepted_nurse != nurse.provider:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_OWNER,
+                'You are not the assigned nurse for this request',
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+
+        old_status = request_obj.status
+        try:
+            updated_request = NurseRequestService.start_service(request_obj)
+            request_status_changed.send(
+                sender=self.__class__,
+                request=updated_request,
+                old_status=old_status,
+                new_status=updated_request.status,
+            )
+            from .serializers import NurseServiceRequestDetailSerializer
+            return Response({
+                'success': True,
+                'data': NurseServiceRequestDetailSerializer(updated_request).data,
+                'message': 'Service started',
+            })
+        except ValueError as e:
+            return error_response(ErrorCodes.REQUEST_INVALID_STATUS, str(e))
+
+    @action(detail=True, methods=['post'])
+    def complete(self, request, pk=None):
+        """
+        Nurse marks the service as completed (COMPLETED).
+
+        POST /api/nurse-requests/nurse/request-history/{id}/complete/
+
+        Requirements:
+        - Authenticated nurse must be the accepted_nurse on the request.
+        - Request must be in IN_PROGRESS status.
+        """
+        nurse = self._get_nurse(request)
+        if not nurse:
+            return error_response(
+                ErrorCodes.NURSE_PROFILE_NOT_FOUND,
+                'Nurse profile not found',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            request_obj = self.get_object()
+        except Exception:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_FOUND,
+                'Request not found',
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        if request_obj.accepted_nurse != nurse.provider:
+            return error_response(
+                ErrorCodes.REQUEST_NOT_OWNER,
+                'You are not the assigned nurse for this request',
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+
+        old_status = request_obj.status
+        try:
+            updated_request = NurseRequestService.complete_service(request_obj)
+            request_status_changed.send(
+                sender=self.__class__,
+                request=updated_request,
+                old_status=old_status,
+                new_status=updated_request.status,
+            )
+            from .serializers import NurseServiceRequestDetailSerializer
+            return Response({
+                'success': True,
+                'data': NurseServiceRequestDetailSerializer(updated_request).data,
+                'message': 'Service completed successfully',
+            })
+        except ValueError as e:
+            return error_response(ErrorCodes.REQUEST_INVALID_STATUS, str(e))
 
     @action(detail=True, methods=['get'], url_path='patient-folder')
     def patient_folder(self, request, pk=None):

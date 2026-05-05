@@ -299,9 +299,27 @@ class NurseRequestService:
     @transaction.atomic
     def nurse_reject_request(request_obj, nurse, reason=''):
         """
-        Nurse rejects the request.
+        Nurse rejects the request without making an offer.
+        Creates a REJECTED NurseOffer so the request is excluded from the
+        nurse's available list on subsequent fetches (via the
+        .exclude(offers__nurse=nurse.provider) filter in get_queryset).
         """
-        # Log rejection (Nurse.provider.user is the User instance)
+        # Only create the rejected-offer record if no offer exists yet.
+        # If the nurse already responded (PENDING/COUNTER_OFFERED), they cannot
+        # flip to rejected — that path is blocked at the view level.
+        existing = NurseOffer.objects.filter(
+            request=request_obj,
+            nurse=nurse.provider
+        ).first()
+
+        if not existing:
+            NurseOffer.objects.create(
+                request=request_obj,
+                nurse=nurse.provider,
+                offered_price=request_obj.patient_offered_price,  # placeholder price
+                status=OfferStatus.REJECTED,
+            )
+
         RequestHistory.objects.create(
             request=request_obj,
             actor=nurse.provider.user,
@@ -318,50 +336,55 @@ class NurseRequestService:
     def patient_accept_offer(request_obj, offer_id):
         """
         Patient accepts a specific nurse offer.
-        This finalizes the request.
+        Returns the updated request object.
         """
         try:
             offer = NurseOffer.objects.get(id=offer_id, request=request_obj)
         except NurseOffer.DoesNotExist:
             raise ValueError("Invalid offer")
-        
-        if offer.status != OfferStatus.PENDING and offer.status != OfferStatus.COUNTER_OFFERED:
+
+        if offer.status not in (OfferStatus.PENDING, OfferStatus.COUNTER_OFFERED):
             raise ValueError("This offer is no longer available")
-        
-        # Update offer status
+
+        # Capture old status BEFORE any mutation
+        old_status = request_obj.status
+
+        # Accept the chosen offer
         offer.status = OfferStatus.ACCEPTED
         offer.save()
-        
-        # Update request
+
+        # Finalise the request
         request_obj.accepted_nurse = offer.nurse
         request_obj.final_price = offer.offered_price
         request_obj.status = RequestStatus.ACCEPTED
         request_obj.accepted_at = timezone.now()
         request_obj.save()
-        
-        # Reject all other offers
+
+        # Expire all other pending/counter offers atomically
         NurseOffer.objects.filter(
             request=request_obj
         ).exclude(
             id=offer.id
-        ).update(
-            status=OfferStatus.REJECTED
-        )
-        
-        # Log action
+        ).filter(
+            status__in=[OfferStatus.PENDING, OfferStatus.COUNTER_OFFERED]
+        ).update(status=OfferStatus.REJECTED)
+
         RequestHistory.objects.create(
             request=request_obj,
             actor=request_obj.get_patient_user(),
             action='OFFER_ACCEPTED',
-            old_status=request_obj.status,
+            old_status=old_status,
             new_status=RequestStatus.ACCEPTED,
             details={
                 'nurse_id': offer.nurse.id,
-                'nurse_name': f"{offer.nurse.user.first_name} {offer.nurse.user.last_name}",
-                'final_price': str(request_obj.final_price)
+                'nurse_name': (
+                    f"{offer.nurse.user.first_name} {offer.nurse.user.last_name}".strip()
+                    or offer.nurse.user.email
+                ),
+                'final_price': str(request_obj.final_price),
             }
         )
-        
+
         return request_obj
 
     @staticmethod
