@@ -1,0 +1,23 @@
+[Unit]
+Description=MediLink Gunicorn (HTTP/WSGI)
+After=network.target postgresql.service
+
+[Service]
+User=django
+Group=www-data
+WorkingDirectory=/home/django/backend/medilink_backend
+EnvironmentFile=/home/django/backend/medilink_backend/.env.prod
+
+ExecStart=/home/django/backend/medilink_backend/venv/bin/gunicorn \
+    --workers 3 \
+    --bind 127.0.0.1:8000 \
+    --timeout 120 \
+    --access-logfile /var/log/medilink/gunicorn-access.log \
+    --error-logfile  /var/log/medilink/gunicorn-error.log \
+    core.wsgi:application
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

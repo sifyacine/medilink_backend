@@ -1,0 +1,21 @@
+[Unit]
+Description=MediLink Daphne (WebSocket/ASGI)
+After=network.target redis.service
+
+[Service]
+User=django
+Group=www-data
+WorkingDirectory=/home/django/backend/medilink_backend
+EnvironmentFile=/home/django/backend/medilink_backend/.env.prod
+
+ExecStart=/home/django/backend/medilink_backend/venv/bin/daphne \
+    --bind 127.0.0.1 \
+    --port 8001 \
+    --proxy-headers \
+    core.asgi:application
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

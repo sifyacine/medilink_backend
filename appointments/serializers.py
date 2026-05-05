@@ -418,9 +418,10 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
         provider = attrs.get('provider')
         service_ids = attrs.get('service_ids', [])
 
-        # If the creating user is a provider, auto-fill the provider field
-        # so they don't need to look up and send their own Provider ID.
-        if user and hasattr(user, 'provider_profile') and not provider:
+        # Providers always get their own profile — ignore whatever provider ID
+        # they sent so a doctor with User.id=8 can never accidentally book under
+        # Provider #8 (which might belong to a completely different doctor).
+        if user and hasattr(user, 'provider_profile'):
             attrs['provider'] = user.provider_profile
             provider = attrs['provider']
 
