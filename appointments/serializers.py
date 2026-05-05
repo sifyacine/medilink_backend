@@ -35,7 +35,7 @@ class AppointmentServiceDetailSerializer(serializers.ModelSerializer):
     Shows service details with custom pricing if set by the doctor.
     """
     service_id = serializers.UUIDField(source='service.id', read_only=True)
-    service_name = serializers.CharField(source='service.name', read_only=True)
+    service_name = serializers.CharField(source='service.title', read_only=True)
     service_description = serializers.CharField(source='service.description', read_only=True)
     
     # Show the custom price if doctor has set one, otherwise base price
@@ -85,7 +85,7 @@ class AppointmentListSerializer(serializers.ModelSerializer):
     """
     provider_name = serializers.SerializerMethodField()
     patient_name = serializers.SerializerMethodField()
-    service_name = serializers.CharField(source='service.name', read_only=True, allow_null=True)
+    service_name = serializers.CharField(source='service.title', read_only=True, allow_null=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     location_type_display = serializers.CharField(source='get_location_type_display', read_only=True)
     is_upcoming = serializers.BooleanField(read_only=True)
@@ -166,7 +166,7 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
     patient_email = serializers.SerializerMethodField()
     patient_phone = serializers.SerializerMethodField()
     
-    service_name = serializers.CharField(source='service.name', read_only=True, allow_null=True)
+    service_name = serializers.CharField(source='service.title', read_only=True, allow_null=True)
     service_description = serializers.CharField(source='service.description', read_only=True, allow_null=True)
     
     # Selected services with prices
@@ -306,7 +306,7 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
                 
                 return [{
                     'service_id': str(obj.service.id),
-                    'service_name': obj.service.name,
+                    'service_name': obj.service.title,
                     'service_description': obj.service.description,
                     'price': price,
                     'currency': obj.service.currency,
@@ -387,9 +387,15 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
     - For online appointments, meeting_link can be added later by provider
     """
     # Make these explicitly optional
+    provider = serializers.PrimaryKeyRelatedField(
+        queryset=Provider.objects.all(),
+        required=False,
+        allow_null=True,
+        help_text='Provider UUID. Auto-filled when the requesting user is a provider.'
+    )
     scheduled_time = serializers.TimeField(required=False, allow_null=True)
     duration_minutes = serializers.IntegerField(required=False, allow_null=True, min_value=5)
-    
+
     # Multiple services selection (IDs)
     service_ids = serializers.ListField(
         child=serializers.UUIDField(),
@@ -421,17 +427,28 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         request = self.context.get('request')
         user = request.user if request else None
-        
+
         patient_user = attrs.get('patient_user')
         patient_record = attrs.get('patient_record')
         provider = attrs.get('provider')
         service_ids = attrs.get('service_ids', [])
-        
+
+        # If the creating user is a provider, auto-fill the provider field
+        # so they don't need to look up and send their own Provider ID.
+        if user and hasattr(user, 'provider_profile') and not provider:
+            attrs['provider'] = user.provider_profile
+            provider = attrs['provider']
+
+        if not provider:
+            raise serializers.ValidationError({
+                'provider': 'Provider is required.'
+            })
+
         # If user is a patient, automatically set patient_user
         if user and hasattr(user, 'role') and user.role == 'PATIENT':
             if not patient_user and not patient_record:
                 attrs['patient_user'] = user
-        
+
         # Validate patient identification
         if not attrs.get('patient_user') and not attrs.get('patient_record'):
             raise serializers.ValidationError({
@@ -443,23 +460,16 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
                 'patient_user': 'Cannot specify both patient_user and patient_record.'
             })
         
-        # Validate services belong to this provider
+        # Validate services exist
         if service_ids:
             from services.models import Service
             services = Service.objects.filter(id__in=service_ids)
-            
+
             if services.count() != len(service_ids):
                 raise serializers.ValidationError({
                     'service_ids': 'One or more service IDs are invalid.'
                 })
-            
-            # Check all services belong to the provider
-            for service in services:
-                if service.provider != provider:
-                    raise serializers.ValidationError({
-                        'service_ids': f'Service "{service.name}" does not belong to the selected provider.'
-                    })
-            
+
             # Store services for later
             attrs['_services'] = list(services)
         
@@ -513,8 +523,11 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
                         'scheduled_date': f'This provider has reached their daily appointment limit ({daily_limit}) for this date. Please choose another date.'
                     })
         
-        # Validate provider availability and check for double-booking (only if time is provided)
-        if scheduled_time:
+        # For providers creating appointments, skip slot availability check —
+        # they manage their own schedule and can enter any time.
+        # For patients, validate against the provider's availability.
+        user_is_provider = user and hasattr(user, 'provider_profile')
+        if scheduled_time and not user_is_provider:
             duration_minutes = attrs.get('duration_minutes') or 30
             is_available, availability_message = SchedulingService.check_provider_available(
                 provider=provider,
@@ -523,7 +536,7 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
                 duration_minutes=duration_minutes,
                 location_type=location_type
             )
-            
+
             if not is_available:
                 raise serializers.ValidationError({
                     'scheduled_time': availability_message

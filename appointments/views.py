@@ -75,7 +75,21 @@ class AppointmentViewSet(viewsets.ModelViewSet):
     - GET /appointments/past/ - Get past appointments
     """
     permission_classes = [permissions.IsAuthenticated, IsAppointmentParticipant]
-    
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+            appointment = serializer.save()
+            return Response(
+                AppointmentDetailSerializer(appointment, context={'request': request}).data,
+                status=status.HTTP_201_CREATED,
+            )
+        except Exception as e:
+            if hasattr(e, 'detail'):
+                return Response({'errors': e.detail}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
     def get_queryset(self):
         """
         Return appointments based on user role.
@@ -225,7 +239,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             return Response({
                 'status': 'confirmed',
                 'message': 'Appointment confirmed successfully',
-                'data': AppointmentDetailSerializer(appointment).data
+                'data': AppointmentDetailSerializer(appointment, context={'request': request}).data
             })
         except Exception as e:
             return Response(
@@ -269,7 +283,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             return Response({
                 'status': 'rejected',
                 'message': 'Appointment rejected successfully',
-                'data': AppointmentDetailSerializer(appointment).data
+                'data': AppointmentDetailSerializer(appointment, context={'request': request}).data
             })
         except Exception as e:
             return Response(
@@ -352,7 +366,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         return Response({
             'message': f'{len(added)} services attached successfully',
             'added_service_ids': added,
-            'data': AppointmentDetailSerializer(appointment).data
+            'data': AppointmentDetailSerializer(appointment, context={'request': request}).data
         })
     
     @action(detail=True, methods=['delete'], url_path='services/(?P<service_id>[^/.]+)')
@@ -437,7 +451,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             return Response({
                 'status': 'cancelled',
                 'message': 'Appointment cancelled successfully',
-                'data': AppointmentDetailSerializer(appointment).data
+                'data': AppointmentDetailSerializer(appointment, context={'request': request}).data
             })
         except Exception as e:
             return Response(
@@ -470,7 +484,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             return Response({
                 'status': 'completed',
                 'message': 'Appointment marked as completed',
-                'data': AppointmentDetailSerializer(appointment).data
+                'data': AppointmentDetailSerializer(appointment, context={'request': request}).data
             })
         except Exception as e:
             return Response(
@@ -493,7 +507,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             return Response({
                 'status': 'no_show',
                 'message': 'Appointment marked as no-show',
-                'data': AppointmentDetailSerializer(appointment).data
+                'data': AppointmentDetailSerializer(appointment, context={'request': request}).data
             })
         except Exception as e:
             return Response(
@@ -514,12 +528,12 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         
         page = self.paginate_queryset(queryset)
         if page is not None:
-            serializer = AppointmentListSerializer(page, many=True)
+            serializer = AppointmentListSerializer(page, many=True, context={'request': request})
             return self.get_paginated_response(serializer.data)
-        
-        serializer = AppointmentListSerializer(queryset, many=True)
+
+        serializer = AppointmentListSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
-    
+
     @action(detail=False, methods=['get'])
     def past(self, request):
         """
@@ -533,12 +547,12 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         
         page = self.paginate_queryset(queryset)
         if page is not None:
-            serializer = AppointmentListSerializer(page, many=True)
+            serializer = AppointmentListSerializer(page, many=True, context={'request': request})
             return self.get_paginated_response(serializer.data)
-        
-        serializer = AppointmentListSerializer(queryset, many=True)
+
+        serializer = AppointmentListSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
-    
+
     @action(detail=False, methods=['get'])
     def today(self, request):
         """
@@ -549,9 +563,9 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             scheduled_date=today
         ).order_by('scheduled_time')
         
-        serializer = AppointmentListSerializer(queryset, many=True)
+        serializer = AppointmentListSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
-    
+
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """
@@ -609,7 +623,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             return Response({
                 'status': 'rescheduled',
                 'message': 'Appointment rescheduled successfully',
-                'data': AppointmentDetailSerializer(rescheduled).data
+                'data': AppointmentDetailSerializer(rescheduled, context={'request': request}).data
             })
         except Exception as e:
             return Response(
@@ -665,10 +679,10 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         
         page = self.paginate_queryset(queryset)
         if page is not None:
-            serializer = AppointmentHistorySerializer(page, many=True)
+            serializer = AppointmentHistorySerializer(page, many=True, context={'request': request})
             return self.get_paginated_response(serializer.data)
-        
-        serializer = AppointmentHistorySerializer(queryset, many=True)
+
+        serializer = AppointmentHistorySerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
     
     @action(detail=False, methods=['get'])
@@ -726,12 +740,12 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         
         page = self.paginate_queryset(queryset)
         if page is not None:
-            serializer = AppointmentListSerializer(page, many=True)
+            serializer = AppointmentListSerializer(page, many=True, context={'request': request})
             return self.get_paginated_response(serializer.data)
-        
-        serializer = AppointmentListSerializer(queryset, many=True)
+
+        serializer = AppointmentListSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
-    
+
     @action(detail=False, methods=['get'])
     def week(self, request):
         """
@@ -751,7 +765,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             scheduled_date__lte=end_of_week
         ).order_by('scheduled_date', 'scheduled_time')
         
-        serializer = AppointmentListSerializer(queryset, many=True)
+        serializer = AppointmentListSerializer(queryset, many=True, context={'request': request})
         return Response({
             'week_start': start_of_week.isoformat(),
             'week_end': end_of_week.isoformat(),

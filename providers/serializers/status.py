@@ -31,10 +31,11 @@ class ProviderStatusSerializer(serializers.ModelSerializer):
 
     provider_type = serializers.CharField(read_only=True)
     provider_type_display = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Provider
         fields = [
+            'id',  # Provider UUID — required for appointment creation
             'status',
             'refusal_reason',
             'approved_at',
@@ -43,6 +44,7 @@ class ProviderStatusSerializer(serializers.ModelSerializer):
             'provider_type_display',
         ]
         read_only_fields = [
+            'id',
             'status',
             'refusal_reason',
             'approved_at',
