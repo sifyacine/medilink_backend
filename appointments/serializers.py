@@ -29,6 +29,40 @@ from accounts.models import User
 from common.utils import get_patient_display_name, get_provider_display_name
 
 
+def _get_custom_service_price(provider, service):
+    """
+    Return the provider's custom price for a service, or the service's base price.
+
+    Handles the Provider → Doctor/Nurse subtype indirection safely.
+    Falls back to the base service price for any provider type without
+    a custom-price table (clinics, labs, VTC, sellers) or when the
+    service is not in the provider's catalogue.
+    """
+    from decimal import Decimal
+
+    base_price = service.price or Decimal('0.00')
+
+    # Doctor custom pricing
+    if hasattr(provider, 'doctor_profile'):
+        try:
+            from services.models import DoctorService
+            ds = DoctorService.objects.get(doctor=provider.doctor_profile, service=service)
+            return ds.custom_price if ds.custom_price else base_price
+        except Exception:
+            return base_price
+
+    # Nurse custom pricing
+    if hasattr(provider, 'nurse_profile'):
+        try:
+            from services.models import NurseService
+            ns = NurseService.objects.get(nurse=provider.nurse_profile, service=service)
+            return ns.custom_price if ns.custom_price else base_price
+        except Exception:
+            return base_price
+
+    return base_price
+
+
 class AppointmentServiceDetailSerializer(serializers.ModelSerializer):
     """
     Serializer for services included in an appointment.
@@ -55,26 +89,7 @@ class AppointmentServiceDetailSerializer(serializers.ModelSerializer):
         ]
     
     def get_price(self, obj):
-        """
-        Get the price for this service.
-        If doctor has custom pricing for this service, use that.
-        Otherwise, use the base service price.
-        """
-        from services.models import DoctorService
-
-        service = obj.service
-        provider = obj.appointment.provider
-
-        # Check if doctor has custom pricing for this service
-        try:
-            doctor_service = DoctorService.objects.get(
-                doctor=provider,
-                service=service
-            )
-            price = doctor_service.custom_price if doctor_service.custom_price else service.price
-        except DoctorService.DoesNotExist:
-            price = service.price
-
+        price = _get_custom_service_price(obj.appointment.provider, obj.service)
         return f"{float(price):.2f} DZD"
 
 
@@ -292,18 +307,8 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
         """Get all services selected for this appointment with their prices."""
         appointment_services = obj.appointment_services.all()
         if not appointment_services.exists():
-            # If no services in the through table, return the primary service if it exists
             if obj.service:
-                from services.models import DoctorService
-                try:
-                    doctor_service = DoctorService.objects.get(
-                        doctor=obj.provider,
-                        service=obj.service
-                    )
-                    price = str(doctor_service.custom_price) if doctor_service.custom_price else str(obj.service.price)
-                except DoctorService.DoesNotExist:
-                    price = str(obj.service.price)
-                
+                price = str(_get_custom_service_price(obj.provider, obj.service))
                 return [{
                     'service_id': str(obj.service.id),
                     'service_name': obj.service.title,
@@ -312,43 +317,23 @@ class AppointmentDetailSerializer(serializers.ModelSerializer):
                     'currency': obj.service.currency,
                 }]
             return []
-        
+
         return AppointmentServiceDetailSerializer(appointment_services, many=True).data
     
     def get_total_price(self, obj):
         """Calculate total price of all selected services."""
         from decimal import Decimal
-        from services.models import DoctorService
-        
+
         total = Decimal('0.00')
         appointment_services = obj.appointment_services.all()
-        
+
         if not appointment_services.exists():
-            # Use primary service price if no services in through table
             if obj.service:
-                try:
-                    doctor_service = DoctorService.objects.get(
-                        doctor=obj.provider,
-                        service=obj.service
-                    )
-                    total = doctor_service.custom_price or obj.service.price
-                except DoctorService.DoesNotExist:
-                    total = obj.service.price
+                total = _get_custom_service_price(obj.provider, obj.service)
         else:
-            # Calculate total from all selected services
             for app_service in appointment_services:
-                service = app_service.service
-                try:
-                    doctor_service = DoctorService.objects.get(
-                        doctor=obj.provider,
-                        service=service
-                    )
-                    price = doctor_service.custom_price or service.price
-                except DoctorService.DoesNotExist:
-                    price = service.price
-                
-                total += price
-        
+                total += _get_custom_service_price(obj.provider, app_service.service)
+
         return str(total)
     
     def get_created_by_name(self, obj):
