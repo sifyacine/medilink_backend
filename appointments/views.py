@@ -571,25 +571,54 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         """
         Get appointment statistics.
         """
+        from django.db.models import Sum
+        from invoices.models import Invoice, InvoiceStatus
+        from patients.models import ProviderPatientAccess
+
         queryset = self.get_queryset()
-        
         today = timezone.now().date()
-        
-        stats = {
-            'total': queryset.count(),
-            'pending': queryset.filter(status=AppointmentStatus.PENDING).count(),
-            'confirmed': queryset.filter(status=AppointmentStatus.CONFIRMED).count(),
-            'completed': queryset.filter(status=AppointmentStatus.COMPLETED).count(),
-            'cancelled': queryset.filter(status=AppointmentStatus.CANCELLED).count(),
-            'no_show': queryset.filter(status=AppointmentStatus.NO_SHOW).count(),
-            'today': queryset.filter(scheduled_date=today).count(),
-            'upcoming': queryset.filter(
+
+        total_patients = 0
+        revenue_today = "0.00"
+
+        user = request.user
+        if user.is_authenticated and hasattr(user, 'provider_profile'):
+            try:
+                provider = user.provider_profile
+                total_patients = (
+                    ProviderPatientAccess.objects
+                    .filter(provider=provider)
+                    .values('patient_record_id')
+                    .distinct()
+                    .count()
+                )
+                paid_today = Invoice.objects.filter(
+                    provider=provider,
+                    updated_at__date=today,
+                    status__in=[InvoiceStatus.PAID, InvoiceStatus.PARTIALLY_PAID],
+                ).aggregate(total=Sum('amount_paid'))['total']
+                revenue_today = str(paid_today or "0.00")
+            except Exception:
+                pass
+
+        data = {
+            'total_appointments': queryset.count(),
+            'pending_appointments': queryset.filter(status=AppointmentStatus.PENDING).count(),
+            'confirmed_appointments': queryset.filter(status=AppointmentStatus.CONFIRMED).count(),
+            'completed_appointments': queryset.filter(status=AppointmentStatus.COMPLETED).count(),
+            'cancelled_appointments': queryset.filter(status=AppointmentStatus.CANCELLED).count(),
+            'no_show_appointments': queryset.filter(status=AppointmentStatus.NO_SHOW).count(),
+            'rescheduled_appointments': queryset.filter(status=AppointmentStatus.RESCHEDULED).count(),
+            'appointments_today': queryset.filter(scheduled_date=today).count(),
+            'upcoming_appointments': queryset.filter(
                 scheduled_date__gte=today,
-                status__in=[AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED]
+                status__in=[AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED],
             ).count(),
+            'total_patients': total_patients,
+            'revenue_today': revenue_today,
         }
-        
-        return Response(stats)
+
+        return Response(data)
     
     @action(detail=True, methods=['post'])
     def reschedule(self, request, pk=None):

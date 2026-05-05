@@ -10,6 +10,7 @@ from providers.views.laboratory import LaboratoryViewSet
 from providers.views.seller import SellerViewSet
 from providers.views.vtc import VTCViewSet
 from providers.views.nurse_location import nurse_location, nurse_location_toggle
+from providers.views.dashboard import ProviderDashboardView
 
 app_name = 'providers'
 
@@ -22,6 +23,9 @@ router.register(r'seller', SellerViewSet, basename='seller')
 router.register(r'vtc', VTCViewSet, basename='vtc')
 
 urlpatterns = [
+    # Provider dashboard snapshot (REST fallback for WS)
+    path('dashboard/', ProviderDashboardView.as_view(), name='provider-dashboard'),
+
     # Provider status endpoint (for all provider types)
     path('status/', provider_status, name='provider-status'),
 

@@ -86,26 +86,31 @@ class DashboardStatsService:
         totals = qs.aggregate(
             total_amount=Sum("total"),
             total_paid=Sum("amount_paid"),
+            total_overdue=Sum(
+                "total",
+                filter=Q(status=InvoiceStatus.OVERDUE),
+            ),
         )
         total_amount = totals["total_amount"] or Decimal("0.00")
         total_paid = totals["total_paid"] or Decimal("0.00")
+        total_overdue = totals["total_overdue"] or Decimal("0.00")
 
         status_counts = qs.values("status").annotate(count=Count("id"))
         sm = {item["status"]: item["count"] for item in status_counts}
 
         return {
-            "total_invoices": sum(sm.values()),
             "total_revenue": str(total_paid),
             "total_outstanding": str(total_amount - total_paid),
-            "draft_count": sm.get(InvoiceStatus.DRAFT, 0),
-            "sent_count": (
-                sm.get(InvoiceStatus.SENT, 0)
-                + sm.get(InvoiceStatus.VIEWED, 0)
-            ),
-            "paid_count": sm.get(InvoiceStatus.PAID, 0),
-            "overdue_count": sm.get(InvoiceStatus.OVERDUE, 0),
-            "partially_paid_count": sm.get(InvoiceStatus.PARTIALLY_PAID, 0),
-            "cancelled_count": sm.get(InvoiceStatus.CANCELLED, 0),
+            "total_overdue": str(total_overdue),
+            "counts": {
+                "PAID": sm.get(InvoiceStatus.PAID, 0),
+                "PENDING": (
+                    sm.get(InvoiceStatus.SENT, 0)
+                    + sm.get(InvoiceStatus.VIEWED, 0)
+                    + sm.get(InvoiceStatus.PARTIALLY_PAID, 0)
+                ),
+                "OVERDUE": sm.get(InvoiceStatus.OVERDUE, 0),
+            },
         }
 
     # ------------------------------------------------------------------
@@ -211,8 +216,17 @@ class DashboardStatsService:
         """Build a combined activity feed from appointments, invoices, and reviews."""
         items = []
 
-        # Recent appointments (created or status-changed)
-        from appointments.models import Appointment
+        from appointments.models import Appointment, AppointmentStatus
+
+        _appt_type_map = {
+            AppointmentStatus.PENDING: "appointment_new",
+            AppointmentStatus.CONFIRMED: "appointment_confirmed",
+            AppointmentStatus.COMPLETED: "appointment_completed",
+            AppointmentStatus.CANCELLED: "appointment_cancelled",
+            AppointmentStatus.REJECTED: "appointment_cancelled",
+            AppointmentStatus.NO_SHOW: "appointment_no_show",
+            AppointmentStatus.RESCHEDULED: "appointment_rescheduled",
+        }
 
         appts = (
             Appointment.objects.filter(provider=provider)
@@ -221,16 +235,24 @@ class DashboardStatsService:
         )
         for a in appts:
             patient_name = _patient_display(a.patient_user, a.patient_record)
+            activity_type = _appt_type_map.get(a.status, "appointment_new")
             items.append({
-                "type": "appointment",
+                "type": activity_type,
                 "id": str(a.pk),
-                "description": f"{a.get_status_display()} appointment with {patient_name}",
+                "description": f"Appointment with {patient_name} — {a.get_status_display()}",
                 "status": a.status,
+                "amount": None,
+                "rating": None,
                 "timestamp": a.updated_at.isoformat() if a.updated_at else a.created_at.isoformat(),
             })
 
-        # Recent invoices
-        from invoices.models import Invoice
+        from invoices.models import Invoice, InvoiceStatus
+
+        _inv_type_map = {
+            InvoiceStatus.PAID: "invoice_paid",
+            InvoiceStatus.PARTIALLY_PAID: "invoice_paid",
+            InvoiceStatus.OVERDUE: "invoice_overdue",
+        }
 
         invoices = (
             Invoice.objects.filter(provider=provider)
@@ -239,16 +261,18 @@ class DashboardStatsService:
         )
         for inv in invoices:
             patient_name = _patient_display(inv.patient_user, inv.patient_record)
+            activity_type = _inv_type_map.get(inv.status, "invoice_created")
+            amount = str(inv.amount_paid) if inv.status in (InvoiceStatus.PAID, InvoiceStatus.PARTIALLY_PAID) else None
             items.append({
-                "type": "invoice",
+                "type": activity_type,
                 "id": str(inv.pk),
                 "description": f"Invoice {inv.invoice_number} — {inv.get_status_display()} ({patient_name})",
                 "status": inv.status,
-                "amount": str(inv.total),
+                "amount": amount,
+                "rating": None,
                 "timestamp": inv.updated_at.isoformat() if inv.updated_at else inv.created_at.isoformat(),
             })
 
-        # Recent reviews
         from django.contrib.contenttypes.models import ContentType
         from reviews.models import Review, ReviewStatus
 
@@ -265,15 +289,16 @@ class DashboardStatsService:
         for r in reviews:
             reviewer_name = r.reviewer.get_full_name() or r.reviewer.email
             items.append({
-                "type": "review",
+                "type": "review_new",
                 "id": str(r.pk),
                 "description": f"{reviewer_name} left a {r.rating}★ review",
+                "status": None,
+                "amount": None,
                 "rating": r.rating,
                 "timestamp": r.created_at.isoformat() if r.created_at else None,
             })
 
-        # Sort combined list by timestamp descending, take top `limit`
-        items.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+        items.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
         return items[:limit]
 
     # ------------------------------------------------------------------

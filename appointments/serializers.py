@@ -113,6 +113,7 @@ class AppointmentListSerializer(serializers.ModelSerializer):
             'id',
             'provider',
             'provider_name',
+            'patient_user',
             'patient_name',
             'service_name',
             'scheduled_date',
