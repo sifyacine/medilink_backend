@@ -78,3 +78,8 @@ EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default='MediLink <no-reply@medilink.dz>')
 
 FRONTEND_URL = env('FRONTEND_URL', default='https://dzmedilink.netlify.app')
+
+# Static & media — served by Nginx from /var/www/medilink/ so www-data can
+# always read them without needing access to /home/django.
+STATIC_ROOT = '/var/www/medilink/staticfiles'
+MEDIA_ROOT  = '/var/www/medilink/media'
