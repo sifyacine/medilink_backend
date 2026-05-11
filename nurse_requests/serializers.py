@@ -843,6 +843,49 @@ class NurseRequestHistorySerializer(serializers.ModelSerializer):
         return None
 
 
+class NurseMyOfferRequestSerializer(serializers.ModelSerializer):
+    """
+    Used by NurseMyOffersViewSet.
+    Shows the request context + this nurse's own offer only — never other nurses' offers.
+    """
+    service_name = serializers.CharField(source='service.title', read_only=True)
+    service_duration_minutes = serializers.IntegerField(source='service.duration_minutes', read_only=True)
+    patient_name = serializers.SerializerMethodField()
+    my_offer = serializers.SerializerMethodField()
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+
+    class Meta:
+        model = NurseServiceRequest
+        fields = [
+            'id', 'service_name', 'service_duration_minutes',
+            'patient_name', 'status', 'status_display',
+            'base_price', 'patient_offered_price', 'final_price',
+            'city', 'address_line', 'latitude', 'longitude',
+            'notes', 'my_offer',
+            'created_at', 'accepted_at', 'started_at', 'completed_at', 'cancelled_at',
+        ]
+        read_only_fields = fields
+
+    def get_patient_name(self, obj):
+        name = obj.get_patient_display_name()
+        if name and len(name) > 1:
+            parts = name.split()
+            if len(parts) >= 2:
+                return f"{parts[0]} {parts[-1][0]}."
+        return name
+
+    def get_my_offer(self, obj):
+        """Return only this nurse's offer — no other nurses' data is exposed."""
+        nurse = self.context.get('nurse')
+        if not nurse:
+            return None
+        try:
+            offer = obj.offers.get(nurse=nurse.provider)
+            return NurseOfferSerializer(offer, context=self.context).data
+        except NurseOffer.DoesNotExist:
+            return None
+
+
 class NurseReviewHistorySerializer(serializers.Serializer):
     """Serializer for nurse's review history (completed services)."""
     id = serializers.IntegerField(read_only=True)

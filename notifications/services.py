@@ -521,8 +521,8 @@ class WebSocketBroadcaster:
                 f"user_{user_id}_appointments",
                 {"type": message_type, "data": data},
             )
-        # Nurse-request stream
-        if "nurse_request" in message_type:
+        # Nurse-request stream — covers nurse_request_*, nurse_offer_*, nurse_review_*, nurse_rating_*
+        if any(k in message_type for k in ("nurse_request", "nurse_offer", "nurse_review", "nurse_rating")):
             WebSocketBroadcaster._send(
                 f"user_{user_id}_nurse_requests",
                 {"type": message_type, "data": data},

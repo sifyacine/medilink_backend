@@ -25,31 +25,40 @@ Patient creates request
 
 | Status | Who sees it | What's happening |
 |--------|-------------|-----------------|
-| `SEARCHING` | Patient waiting, nurses being notified | Patient's request is live, nearby nurses get FCM/WS push |
-| `NURSE_RESPONDED` | Patient gets notified | At least one nurse sent an offer |
-| `PATIENT_DECISION` | Patient chooses | Multiple offers available (alias used in some filters) |
-| `ACCEPTED` | Both parties notified | Patient picked a nurse, others' offers expired |
+| `SEARCHING` | Patient waiting, nurses being notified | Request is live — nearby nurses get FCM + city WS push |
+| `NURSE_RESPONDED` | Patient gets notified | At least one nurse has responded with an offer |
+| `ACCEPTED` | Both parties notified | Patient picked a nurse — all other offers rejected/expired |
 | `IN_PROGRESS` | Both parties notified | Nurse tapped "Start Service" |
-| `COMPLETED` | Patient notified, reviews unlocked | Nurse tapped "Complete Service" |
-| `CANCELLED` | Relevant party notified | Patient or system cancelled |
+| `COMPLETED` | Patient notified, reviews unlocked | Nurse tapped "Complete" (or auto-completed by system) |
+| `CANCELLED` | Relevant party notified | Patient cancelled, or system auto-cancelled (timeout) |
+
+> `PATIENT_DECISION` is defined in the model's choices and used in `is_active` filter queries, but it is never assigned as a status during the normal flow. Treat `NURSE_RESPONDED` as the state where the patient is deciding.
 
 ---
 
 ## WebSocket Connection
 
-**Endpoint:** `wss://api.medilink.dz/ws/nurse-requests/`  
-**Auth:** Pass `?token=<auth_token>` in the query string — **not** in headers.  
+There are **two separate WS endpoints** — connect to the one that matches the use case:
+
+| URL | Who connects | When |
+|-----|-------------|------|
+| `wss://api.medilink.dz/ws/nurse-requests/{request_id}/` | Patient | Subscribe to a single request's live updates |
+| `wss://api.medilink.dz/ws/nurse-requests/available/` | Nurse | Subscribe to city feed + personal stream |
+
+**Auth:** Pass `?token=<DRF-auth-token>` as a query parameter — headers are not supported for WS.  
+Example: `wss://api.medilink.dz/ws/nurse-requests/available/?token=abc123`  
 **Close code 4001** = not authenticated; reconnect with a valid token.
 
-### Channel Groups (server-managed)
+### Channel Groups (server-managed — no action needed from client)
 
-| Group | Who joins | Purpose |
-|-------|-----------|---------|
-| `user_{user_id}_nurse_requests` | Patient & Nurse (personal) | Personal events (offers, status) |
-| `request_{request_id}_updates` | Anyone watching a request | All status changes on one request |
-| `city_{city_name}_requests` | Nurses in that city | New requests broadcast to city |
+| Group | Auto-joined by | Purpose |
+|-------|---------------|---------|
+| `user_{user_id}_nurse_requests` | Both endpoints | Personal stream — offers, accepted, status changes |
+| `request_{request_id}_updates` | Patient endpoint only | All events on one specific request |
+| `city_{city_name}_requests` | Nurse endpoint (if city address found) | New request broadcasts for the nurse's city |
 
-> City group names use lowercase with underscores: `city_algiers_requests`, `city_oran_requests`
+> City group name is derived from the nurse's primary WORK/CLINIC address city, lowercased with spaces replaced by underscores: `city_algiers_requests`, `city_oran_requests`, `city_bab_el_oued_requests`.  
+> **If a nurse has no address with a city set, they won't join any city group and won't receive new-request broadcasts — make sure the nurse's profile has a WORK or CLINIC address with a `city` value.**
 
 ### Sending a message to the server
 
@@ -490,7 +499,7 @@ Returns last 10 completed services for that nurse (anonymised patient names).
 
 ## A.10  Decline a Specific Offer
 
-**`POST /api/nurse-requests/patient/nurse-requests/{id}/decline_offer/`**
+**`POST /api/nurse-requests/patient/nurse-requests/{id}/decline-offer/`**
 
 Declines one offer while keeping the request open for others.
 
@@ -924,7 +933,7 @@ Removes the request from this nurse's feed. Does not affect other nurses.
 
 **`GET /api/nurse-requests/nurse/my-offers/`**
 
-Shows all requests where the nurse submitted any offer (including rejected, expired, and accepted).
+Shows all requests where the nurse submitted any offer. **Only this nurse's own offer is included in each result — other nurses' offers are never exposed.**
 
 | Query param | Values |
 |------------|--------|
@@ -938,7 +947,39 @@ Shows all requests where the nurse submitted any offer (including rejected, expi
 {
   "success": true,
   "count": 15,
-  "results": [ /* NurseServiceRequestDetailSerializer objects */ ],
+  "results": [
+    {
+      "id": 42,
+      "service_name": "Home Blood Draw",
+      "service_duration_minutes": 30,
+      "patient_name": "Yacine B.",
+      "status": "ACCEPTED",
+      "status_display": "Accepted",
+      "base_price": "800.00",
+      "patient_offered_price": "900.00",
+      "final_price": "900.00",
+      "city": "Algiers",
+      "address_line": "12 Rue Didouche Mourad",
+      "latitude": "36.737232",
+      "longitude": "3.086472",
+      "notes": "Ring doorbell twice",
+      "my_offer": {
+        "id": 88,
+        "nurse_id": 9,
+        "offered_price": "900.00",
+        "status": "ACCEPTED",
+        "estimated_arrival_time": "00:20:00",
+        "distance_km": "4.50",
+        "notes": "I'm nearby",
+        "created_at": "2025-05-11T10:03:00Z"
+      },
+      "created_at": "2025-05-11T10:00:00Z",
+      "accepted_at": "2025-05-11T10:10:00Z",
+      "started_at": null,
+      "completed_at": null,
+      "cancelled_at": null
+    }
+  ],
   "stats": {
     "total_offers": 15,
     "pending": 2,
@@ -1455,7 +1496,7 @@ The `_ws_to_provider` method calls `WebSocketBroadcaster.send_to_patient()` inst
 | POST | `/api/nurse-requests/patient/nurse-requests/` | Create request |
 | GET | `/api/nurse-requests/patient/nurse-requests/{id}/` | Request detail |
 | POST | `/api/nurse-requests/patient/nurse-requests/{id}/accept/` | Accept offer |
-| POST | `/api/nurse-requests/patient/nurse-requests/{id}/decline_offer/` | Decline one offer |
+| POST | `/api/nurse-requests/patient/nurse-requests/{id}/decline-offer/` | Decline one offer |
 | POST | `/api/nurse-requests/patient/nurse-requests/{id}/cancel/` | Cancel request |
 | GET | `/api/nurse-requests/patient/nurse-requests/{id}/nurse-profile/{nurse_id}/` | View nurse profile |
 | GET | `/api/nurse-requests/patient/nurse-requests/{id}/nurse-history/{nurse_id}/` | View nurse history |

@@ -34,6 +34,7 @@ from .serializers import (
     NurseProfileDetailSerializer,
     NurseReviewHistorySerializer,
     NurseRequestHistorySerializer,
+    NurseMyOfferRequestSerializer,
 )
 from providers.models import Provider, Nurse
 from .permissions import IsPatient, IsNurse, IsRequestOwner
@@ -1518,8 +1519,8 @@ class NurseMyOffersViewSet(viewsets.ReadOnlyModelViewSet):
     - GET /nurse/my-offers/{id}/ - Get offer details
     """
     permission_classes = [IsAuthenticated, IsNurse]
-    serializer_class = NurseServiceRequestDetailSerializer
-    
+    serializer_class = NurseMyOfferRequestSerializer
+
     def _get_nurse(self, request):
         """Get the nurse profile for the current user"""
         from providers.models import Nurse
@@ -1528,95 +1529,91 @@ class NurseMyOffersViewSet(viewsets.ReadOnlyModelViewSet):
             return provider.nurse_profile
         except Exception:
             return None
-    
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['nurse'] = self._get_nurse(self.request)
+        return context
+
     def get_queryset(self):
         """
-        Return all requests where nurse has submitted an offer (full history).
-        
-        This includes:
-        - Requests where nurse offer was accepted
-        - Requests where nurse offer was rejected (patient chose another nurse)
-        - Requests where nurse counter-offered but patient rejected
-        - Requests where patient cancelled after nurse submitted offer
-        - All pending offers
-        
+        Return all requests where this nurse has submitted an offer.
+        Only this nurse's own offer is exposed in the serializer — other nurses' offers are hidden.
+
         Query Parameters:
         - status: Filter by request status (e.g., COMPLETED, CANCELLED)
-        - offer_status: Filter by nurse's offer status (PENDING, ACCEPTED, REJECTED)
+        - offer_status: Filter by nurse's own offer status (PENDING, ACCEPTED, REJECTED, COUNTER_OFFERED)
         - is_active: Filter active requests only
         - is_history: Filter historical requests only (COMPLETED, CANCELLED)
         """
         nurse = self._get_nurse(self.request)
-        
+
         if not nurse:
             return NurseServiceRequest.objects.none()
-        
+
         queryset = NurseServiceRequest.objects.filter(
-            offers__nurse=nurse.provider  # NurseOffer.nurse is FK to Provider
+            offers__nurse=nurse.provider
         ).select_related(
             'service', 'patient_user', 'accepted_nurse__user'
         ).prefetch_related(
             'offers__nurse__user'
         ).distinct().order_by('-created_at')
-        
-        # Filter by request status
+
         status_filter = self.request.query_params.get('status')
         if status_filter:
             queryset = queryset.filter(status=status_filter.upper())
-        
-        # Filter by nurse's offer status
+
         offer_status = self.request.query_params.get('offer_status')
         if offer_status:
             queryset = queryset.filter(
                 offers__nurse=nurse.provider,
                 offers__status=offer_status.upper()
             )
-        
-        # Filter active vs historical
+
         is_active = self.request.query_params.get('is_active')
         is_history = self.request.query_params.get('is_history')
-        
+
         active_statuses = [
-            RequestStatus.CREATED, RequestStatus.SEARCHING, 
+            RequestStatus.CREATED, RequestStatus.SEARCHING,
             RequestStatus.NURSE_RESPONDED, RequestStatus.PATIENT_DECISION,
-            RequestStatus.ACCEPTED, RequestStatus.IN_PROGRESS
+            RequestStatus.ACCEPTED, RequestStatus.IN_PROGRESS,
         ]
         history_statuses = [RequestStatus.COMPLETED, RequestStatus.CANCELLED]
-        
+
         if is_active and is_active.lower() == 'true':
             queryset = queryset.filter(status__in=active_statuses)
         elif is_history and is_history.lower() == 'true':
             queryset = queryset.filter(status__in=history_statuses)
-        
+
         return queryset
-    
+
     def list(self, request, *args, **kwargs):
-        """List nurse's offers with summary"""
         nurse = self._get_nurse(request)
-        
+
         if not nurse:
             return error_response(
                 ErrorCodes.NURSE_PROFILE_NOT_FOUND,
                 'Nurse profile not found',
                 status_code=status.HTTP_404_NOT_FOUND
             )
-        
+
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
-        
-        # Get stats
-        from django.db.models import Count
+
         stats = {
             'total_offers': queryset.count(),
-            'pending': queryset.filter(offers__nurse=nurse.provider, offers__status=OfferStatus.PENDING).distinct().count(),
+            'pending': queryset.filter(
+                offers__nurse=nurse.provider,
+                offers__status=OfferStatus.PENDING,
+            ).distinct().count(),
             'accepted': queryset.filter(accepted_nurse=nurse.provider).count(),
         }
-        
+
         return Response({
             'success': True,
             'count': queryset.count(),
             'results': serializer.data,
-            'stats': stats
+            'stats': stats,
         })
 
 
