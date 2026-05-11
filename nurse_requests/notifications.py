@@ -535,8 +535,8 @@ class NurseRequestNotifier:
     def _ws_to_provider(cls, provider, message_type: str, data: dict):
         """Push a WS event to a specific provider."""
         if hasattr(provider, 'user'):
-            WebSocketBroadcaster.send_to_patient(
-                user_id=provider.user.id,
+            WebSocketBroadcaster.send_to_provider(
+                provider_id=provider.id,
                 message_type=message_type,
                 data=data,
             )

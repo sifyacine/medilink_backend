@@ -39,6 +39,7 @@ from providers.models import Provider, Nurse
 from .permissions import IsPatient, IsNurse, IsRequestOwner
 from .services import NurseRequestService
 from .signals import request_created, request_status_changed, nurse_offer_submitted
+from common.views import StandardPagination
 
 
 # =============================================================================
@@ -175,7 +176,7 @@ class NursingServiceViewSet(viewsets.ReadOnlyModelViewSet):
 class PatientNurseRequestViewSet(viewsets.ModelViewSet):
     """
     ViewSet for patients to manage their nurse service requests.
-    
+
     Endpoints:
     - GET /patient/nurse-requests/ - List all my requests
     - POST /patient/nurse-requests/ - Create new request
@@ -184,6 +185,7 @@ class PatientNurseRequestViewSet(viewsets.ModelViewSet):
     - POST /patient/nurse-requests/{id}/cancel/ - Cancel request
     """
     permission_classes = [IsAuthenticated, IsPatient]
+    pagination_class = StandardPagination
     
     def get_queryset(self):
         """

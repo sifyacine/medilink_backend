@@ -345,7 +345,7 @@ class AcceptOfferSerializer(serializers.Serializer):
         request = self.context.get('request_obj')
         try:
             offer = NurseOffer.objects.get(id=value, request=request)
-            if offer.status != OfferStatus.PENDING:
+            if offer.status not in (OfferStatus.PENDING, OfferStatus.COUNTER_OFFERED):
                 raise serializers.ValidationError("This offer is no longer available")
         except NurseOffer.DoesNotExist:
             raise serializers.ValidationError("Invalid offer selected")
