@@ -113,6 +113,18 @@ MEDILINK = {
         'PAGE_SIZE': 20,
         'MAX_PAGE_SIZE': 100,
     },
+    'NURSE_REQUEST_TIMEOUTS': {
+        # Minutes with no nurse response before auto-cancel
+        'SEARCHING_TIMEOUT_MINUTES': 30,
+        # Minutes patient has to pick an offer before auto-cancel
+        'OFFER_DECISION_TIMEOUT_MINUTES': 15,
+        # Hours nurse has to start service before auto-cancel
+        'START_TIMEOUT_HOURS': 2,
+        # Extra buffer minutes added on top of service.duration_minutes before auto-complete
+        'COMPLETION_BUFFER_MINUTES': 30,
+        # Minutes before a PENDING/COUNTER_OFFERED offer auto-expires
+        'OFFER_EXPIRY_MINUTES': 20,
+    },
 }
 
 SITE_ID = 1

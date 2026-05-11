@@ -1,3 +1,7 @@
+import logging
+from datetime import timedelta
+
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from math import radians, sin, cos, sqrt, atan2
@@ -12,6 +16,8 @@ from .models import (
 from providers.models import Provider, Nurse
 from providers.models.nurse import NurseLocation
 from common.enums import ProviderStatus
+
+logger = logging.getLogger(__name__)
 
 
 class NurseRequestService:
@@ -451,11 +457,11 @@ class NurseRequestService:
         """
         if request_obj.status != RequestStatus.IN_PROGRESS:
             raise ValueError("Service must be in progress to complete")
-        
+
         request_obj.status = RequestStatus.COMPLETED
         request_obj.completed_at = timezone.now()
         request_obj.save()
-        
+
         RequestHistory.objects.create(
             request=request_obj,
             actor=request_obj.accepted_nurse.user,
@@ -463,5 +469,171 @@ class NurseRequestService:
             old_status=RequestStatus.IN_PROGRESS,
             new_status=RequestStatus.COMPLETED
         )
-        
+
         return request_obj
+
+    # ------------------------------------------------------------------
+    # Auto-transition (called by management command every minute)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def run_auto_transitions(cls):
+        """
+        Scan open requests and apply time-based status transitions.
+
+        Called by `manage.py auto_transition_nurse_requests` (run via cron
+        every minute — no Celery required).
+
+        Returns a dict with counts for each transition type performed.
+        """
+        cfg = settings.MEDILINK.get('NURSE_REQUEST_TIMEOUTS', {})
+        searching_timeout   = cfg.get('SEARCHING_TIMEOUT_MINUTES', 30)
+        decision_timeout    = cfg.get('OFFER_DECISION_TIMEOUT_MINUTES', 15)
+        start_timeout_hours = cfg.get('START_TIMEOUT_HOURS', 2)
+        completion_buffer   = cfg.get('COMPLETION_BUFFER_MINUTES', 30)
+        offer_expiry        = cfg.get('OFFER_EXPIRY_MINUTES', 20)
+
+        now = timezone.now()
+        counts = {
+            'searching_cancelled': 0,
+            'offers_expired':      0,
+            'decision_cancelled':  0,
+            'start_cancelled':     0,
+            'in_progress_completed': 0,
+        }
+
+        # 1. SEARCHING → CANCELLED (no offers within timeout)
+        cutoff = now - timedelta(minutes=searching_timeout)
+        stale_searching = NurseServiceRequest.objects.filter(
+            status=RequestStatus.SEARCHING,
+            updated_at__lte=cutoff,
+        ).select_related('service')
+        for req in stale_searching:
+            try:
+                cls._auto_cancel(
+                    req,
+                    reason='No nurses were available in your area. Please try again.',
+                    action='AUTO_CANCELLED_NO_RESPONSE',
+                )
+                counts['searching_cancelled'] += 1
+            except Exception as exc:
+                logger.error('Auto-cancel SEARCHING failed for request %s: %s', req.pk, exc)
+
+        # 2. Expire individual PENDING / COUNTER_OFFERED offers past their window
+        offer_cutoff = now - timedelta(minutes=offer_expiry)
+        expired_count = NurseOffer.objects.filter(
+            status__in=[OfferStatus.PENDING, OfferStatus.COUNTER_OFFERED],
+            created_at__lte=offer_cutoff,
+        ).update(status=OfferStatus.EXPIRED)
+        counts['offers_expired'] = expired_count
+
+        # 3. NURSE_RESPONDED → CANCELLED (patient took too long to decide)
+        #    Only trigger when ALL remaining offers are now expired/rejected.
+        decision_cutoff = now - timedelta(minutes=decision_timeout)
+        responded_reqs = NurseServiceRequest.objects.filter(
+            status=RequestStatus.NURSE_RESPONDED,
+            updated_at__lte=decision_cutoff,
+        ).prefetch_related('offers')
+        for req in responded_reqs:
+            has_live_offer = req.offers.filter(
+                status__in=[OfferStatus.PENDING, OfferStatus.COUNTER_OFFERED]
+            ).exists()
+            if not has_live_offer:
+                try:
+                    cls._auto_cancel(
+                        req,
+                        reason='All nurse offers have expired. Please create a new request.',
+                        action='AUTO_CANCELLED_OFFERS_EXPIRED',
+                    )
+                    counts['decision_cancelled'] += 1
+                except Exception as exc:
+                    logger.error('Auto-cancel NURSE_RESPONDED failed for request %s: %s', req.pk, exc)
+
+        # 4. ACCEPTED → CANCELLED (nurse never arrived / started within timeout)
+        start_cutoff = now - timedelta(hours=start_timeout_hours)
+        unstarted = NurseServiceRequest.objects.filter(
+            status=RequestStatus.ACCEPTED,
+            accepted_at__lte=start_cutoff,
+        ).select_related('accepted_nurse__user', 'service')
+        for req in unstarted:
+            try:
+                cls._auto_cancel(
+                    req,
+                    reason='The nurse did not start the service in time. Please create a new request.',
+                    action='AUTO_CANCELLED_NURSE_NO_SHOW',
+                )
+                counts['start_cancelled'] += 1
+            except Exception as exc:
+                logger.error('Auto-cancel ACCEPTED failed for request %s: %s', req.pk, exc)
+
+        # 5. IN_PROGRESS → COMPLETED (service duration + buffer elapsed)
+        in_progress = NurseServiceRequest.objects.filter(
+            status=RequestStatus.IN_PROGRESS,
+            started_at__isnull=False,
+        ).select_related('service', 'accepted_nurse__user')
+        for req in in_progress:
+            duration_minutes = getattr(req.service, 'duration_minutes', None) or 60
+            expected_end = req.started_at + timedelta(
+                minutes=duration_minutes + completion_buffer
+            )
+            if now >= expected_end:
+                try:
+                    with transaction.atomic():
+                        req.status = RequestStatus.COMPLETED
+                        req.completed_at = now
+                        req.save(update_fields=['status', 'completed_at', 'updated_at'])
+                        RequestHistory.objects.create(
+                            request=req,
+                            actor=None,
+                            action='AUTO_COMPLETED',
+                            old_status=RequestStatus.IN_PROGRESS,
+                            new_status=RequestStatus.COMPLETED,
+                            details={
+                                'reason': 'Auto-completed: service duration elapsed',
+                                'duration_minutes': duration_minutes,
+                                'buffer_minutes': completion_buffer,
+                            },
+                        )
+                    cls._fire_status_changed(req, RequestStatus.IN_PROGRESS, RequestStatus.COMPLETED)
+                    counts['in_progress_completed'] += 1
+                except Exception as exc:
+                    logger.error('Auto-complete IN_PROGRESS failed for request %s: %s', req.pk, exc)
+
+        return counts
+
+    @classmethod
+    def _auto_cancel(cls, req, reason: str, action: str):
+        """Atomically cancel a request and fire the status-changed signal."""
+        old_status = req.status
+        with transaction.atomic():
+            # Expire any live offers
+            NurseOffer.objects.filter(
+                request=req,
+                status__in=[OfferStatus.PENDING, OfferStatus.COUNTER_OFFERED],
+            ).update(status=OfferStatus.EXPIRED)
+
+            req.status = RequestStatus.CANCELLED
+            req.cancelled_at = timezone.now()
+            req.cancellation_reason = reason
+            req.save(update_fields=['status', 'cancelled_at', 'cancellation_reason', 'updated_at'])
+
+            RequestHistory.objects.create(
+                request=req,
+                actor=None,
+                action=action,
+                old_status=old_status,
+                new_status=RequestStatus.CANCELLED,
+                details={'reason': reason, 'auto': True},
+            )
+        cls._fire_status_changed(req, old_status, RequestStatus.CANCELLED)
+
+    @staticmethod
+    def _fire_status_changed(req, old_status: str, new_status: str):
+        """Dispatch the request_status_changed signal (notifications run on_commit)."""
+        from .signals import request_status_changed
+        request_status_changed.send(
+            sender=NurseRequestService,
+            request=req,
+            old_status=old_status,
+            new_status=new_status,
+        )
