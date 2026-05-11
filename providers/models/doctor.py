@@ -65,11 +65,9 @@ class Doctor(models.Model):
     # Professional Information
     license_number = models.CharField(
         max_length=100,
-        unique=True,
-        db_index=True,
         blank=True,
         null=True,
-        help_text='Medical license number (unique)'
+        help_text='Medical license number (unique when set)'
     )
     years_of_experience = models.PositiveIntegerField(
         null=True,
@@ -152,6 +150,13 @@ class Doctor(models.Model):
             models.Index(fields=['license_number']),
             models.Index(fields=['is_verified']),
             models.Index(fields=['is_available']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['license_number'],
+                condition=models.Q(license_number__isnull=False),
+                name='doctor_license_number_unique_notnull',
+            ),
         ]
     
     def __str__(self):

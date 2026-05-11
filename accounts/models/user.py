@@ -12,7 +12,7 @@ from django.db import models
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 
-from common.enums import UserRole, UserAccountStatus
+from common.enums import UserRole, UserAccountStatus, ProviderType
 
 
 class UserManager(BaseUserManager):
@@ -323,7 +323,7 @@ class User(AbstractBaseUser, PermissionsMixin):
                 provider_type = getattr(provider, 'provider_type', None)
 
                 try:
-                    if provider_type == 'DOCTOR' and hasattr(provider, 'doctor_profile'):
+                    if provider_type == ProviderType.DOCTOR and hasattr(provider, 'doctor_profile'):
                         doctor = provider.doctor_profile
                         add(bool(doctor.first_name))
                         add(bool(doctor.last_name))
@@ -331,7 +331,7 @@ class User(AbstractBaseUser, PermissionsMixin):
                         add(bool(doctor.degree_document))
                         add(bool(doctor.profile_image))
 
-                    elif provider_type == 'NURSE' and hasattr(provider, 'nurse_profile'):
+                    elif provider_type == ProviderType.NURSE and hasattr(provider, 'nurse_profile'):
                         nurse = provider.nurse_profile
                         add(bool(nurse.first_name))
                         add(bool(nurse.last_name))

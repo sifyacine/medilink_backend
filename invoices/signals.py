@@ -24,26 +24,26 @@ def handle_appointment_completion(sender, instance, created, **kwargs):
         return
     
     # Check if auto-invoice is enabled
-    auto_invoice = getattr(settings, 'MEDILINK_AUTO_INVOICE_APPOINTMENTS', False)
-    if not auto_invoice:
+    medilink = getattr(settings, 'MEDILINK', {})
+    features = medilink.get('FEATURES', {})
+    if not features.get('AUTO_INVOICE_APPOINTMENTS', False):
         return
-    
+
     from appointments.models import AppointmentStatus
-    
+
     # Only trigger on completion
     if instance.status != AppointmentStatus.COMPLETED:
         return
-    
+
     # Check if invoice already exists
     if Invoice.objects.filter(appointment=instance).exists():
         return
-    
-    # Import here to avoid circular imports
+
     from .services import InvoiceService, InvoiceConfig
-    
+
     try:
         config = InvoiceConfig(
-            auto_send=getattr(settings, 'MEDILINK_AUTO_SEND_INVOICES', False),
+            auto_send=features.get('AUTO_SEND_INVOICES', False),
         )
         InvoiceService.create_from_appointment(
             appointment=instance,
@@ -69,28 +69,29 @@ def handle_nurse_request_completion(sender, instance, created, **kwargs):
         return
     
     # Check if auto-invoice is enabled
-    auto_invoice = getattr(settings, 'MEDILINK_AUTO_INVOICE_NURSE_REQUESTS', False)
-    if not auto_invoice:
+    medilink = getattr(settings, 'MEDILINK', {})
+    features = medilink.get('FEATURES', {})
+    if not features.get('AUTO_INVOICE_NURSE_REQUESTS', False):
         return
-    
+
     try:
         from nurse_requests.models import RequestStatus
-        
+
         # Only trigger on completion
         if instance.status != RequestStatus.COMPLETED:
             return
     except ImportError:
         return
-    
+
     # Check if invoice already exists
     if Invoice.objects.filter(nurse_request=instance).exists():
         return
-    
+
     from .services import InvoiceService, InvoiceConfig
-    
+
     try:
         config = InvoiceConfig(
-            auto_send=getattr(settings, 'MEDILINK_AUTO_SEND_INVOICES', False),
+            auto_send=features.get('AUTO_SEND_INVOICES', False),
         )
         InvoiceService.create_from_nurse_request(
             nurse_request=instance,

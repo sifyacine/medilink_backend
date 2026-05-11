@@ -3,6 +3,8 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 
+from common.enums import ProviderType
+
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
@@ -142,7 +144,7 @@ class NurseRequestConsumer(AsyncJsonWebsocketConsumer):
         try:
             return (
                 hasattr(self.user, "provider_profile")
-                and self.user.provider_profile.provider_type == "NURSE"
+                and self.user.provider_profile.provider_type == ProviderType.NURSE
             )
         except Exception:
             return False

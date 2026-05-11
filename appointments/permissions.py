@@ -8,6 +8,7 @@ Provides granular access control for:
 - Rescheduling (with restrictions after confirmation)
 """
 from rest_framework import permissions
+from common.enums import UserRole
 
 from .models import AppointmentStatus
 
@@ -99,7 +100,7 @@ class CanCreateAppointment(permissions.BasePermission):
             return True
         
         # Patients can create appointments for themselves
-        if hasattr(user, 'role') and user.role == 'PATIENT':
+        if hasattr(user, 'role') and user.role == UserRole.PATIENT:
             return True
         
         return False

@@ -27,36 +27,41 @@ from providers.models.provider import Provider
 from patients.models import PatientRecord
 from accounts.models import User
 from common.utils import get_patient_display_name, get_provider_display_name
+from common.enums import UserRole
 
 
 def _get_custom_service_price(provider, service):
     """
     Return the provider's custom price for a service, or the service's base price.
 
-    Handles the Provider → Doctor/Nurse subtype indirection safely.
-    Falls back to the base service price for any provider type without
-    a custom-price table (clinics, labs, VTC, sellers) or when the
-    service is not in the provider's catalogue.
+    Uses prefetched custom service data (loaded via get_appointment_prefetch_related)
+    so no additional DB queries are issued during serialization.
+    Falls back to a live DB query only if prefetch data is not available.
     """
     from decimal import Decimal
 
     base_price = service.price or Decimal('0.00')
 
-    # Doctor custom pricing
-    if hasattr(provider, 'doctor_profile'):
-        try:
-            from services.models import DoctorService
-            ds = DoctorService.objects.get(doctor=provider.doctor_profile, service=service)
-            return ds.custom_price if ds.custom_price else base_price
-        except Exception:
+    for profile_attr in ('doctor_profile', 'nurse_profile'):
+        profile = getattr(provider, profile_attr, None)
+        if profile is None:
+            continue
+        prefetched = getattr(profile, 'prefetched_custom_services', None)
+        if prefetched is not None:
+            for entry in prefetched:
+                if entry.service_id == service.pk:
+                    return entry.custom_price if entry.custom_price else base_price
             return base_price
-
-    # Nurse custom pricing
-    if hasattr(provider, 'nurse_profile'):
+        # Fallback when queryset was not prefetched (e.g. direct serializer use)
         try:
-            from services.models import NurseService
-            ns = NurseService.objects.get(nurse=provider.nurse_profile, service=service)
-            return ns.custom_price if ns.custom_price else base_price
+            if profile_attr == 'doctor_profile':
+                from services.models import DoctorService
+                ds = DoctorService.objects.get(doctor=profile, service=service)
+                return ds.custom_price if ds.custom_price else base_price
+            else:
+                from services.models import NurseService
+                ns = NurseService.objects.get(nurse=profile, service=service)
+                return ns.custom_price if ns.custom_price else base_price
         except Exception:
             return base_price
 
@@ -432,7 +437,7 @@ class AppointmentCreateSerializer(serializers.ModelSerializer):
             })
 
         # If user is a patient, automatically set patient_user
-        if user and hasattr(user, 'role') and user.role == 'PATIENT':
+        if user and hasattr(user, 'role') and user.role == UserRole.PATIENT:
             if not patient_user and not patient_record:
                 attrs['patient_user'] = user
 

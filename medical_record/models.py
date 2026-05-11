@@ -219,6 +219,15 @@ class MedicalRecord(models.Model):
             models.Index(fields=['patient', 'folder_name']),
             models.Index(fields=['patient', 'severity_level', '-record_date']),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(patient__isnull=False) |
+                    models.Q(patient_record__isnull=False)
+                ),
+                name='medical_record_has_patient',
+            ),
+        ]
     
     def __str__(self):
         return f'{self.title} - {self.patient_display_name} ({self.record_date})'

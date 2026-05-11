@@ -5,7 +5,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 
-from common.enums import UserRole
+from common.enums import UserRole, ProviderType
 
 User = get_user_model()
 
@@ -162,7 +162,7 @@ class ProviderRegisterSerializer(serializers.Serializer):
 
         provider_type = attrs.get('provider_type')
 
-        if provider_type == 'DOCTOR':
+        if provider_type == ProviderType.DOCTOR:
             required_fields = [
                 'first_name',
                 'last_name',
@@ -177,7 +177,7 @@ class ProviderRegisterSerializer(serializers.Serializer):
             if errors:
                 raise serializers.ValidationError(errors)
 
-        elif provider_type == 'NURSE':
+        elif provider_type == ProviderType.NURSE:
             required_fields = [
                 'first_name',
                 'last_name',

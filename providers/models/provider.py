@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from accounts.models import User
 from common.enums import ProviderStatus, ProviderType
+from typing import Optional
 
 
 class Provider(models.Model):
@@ -49,20 +50,6 @@ class Provider(models.Model):
         blank=True,
         related_name='approved_providers',
         help_text='Admin who approved this provider'
-    )
-    # Legacy fields for backward compatibility
-    verified_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text='Legacy: When the provider was verified (use approved_at)'
-    )
-    verified_by = models.ForeignKey(
-        User,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='verified_providers',
-        help_text='Legacy: Admin who verified this provider (use approved_by)'
     )
     created_at = models.DateTimeField(
         default=timezone.now,
@@ -118,24 +105,32 @@ class Provider(models.Model):
         self.approved_at = timezone.now()
         self.approved_by = approved_by
         self.refusal_reason = None
-        # Legacy fields
-        self.verified_at = timezone.now()
-        self.verified_by = approved_by
-        self.save()
-    
+        self.save(update_fields=['status', 'approved_at', 'approved_by', 'refusal_reason', 'updated_at'])
+
     def verify(self, verified_by):
-        """Legacy method - use approve() instead."""
+        """Alias kept for call-site compatibility — use approve() instead."""
         self.approve(verified_by)
-    
+
     def refuse(self, reason, refused_by):
         """Mark provider as refused with a reason."""
         if not reason or not reason.strip():
             raise ValueError('Refusal reason is required')
         self.status = ProviderStatus.REFUSED
         self.refusal_reason = reason.strip()
-        self.verified_at = None
-        self.verified_by = refused_by
-        self.save()
+        self.save(update_fields=['status', 'refusal_reason', 'updated_at'])
+
+    @property
+    def typed_profile(self) -> Optional[object]:
+        """Return the type-specific submodel instance, or None."""
+        profile_attr = {
+            ProviderType.DOCTOR: 'doctor_profile',
+            ProviderType.NURSE: 'nurse_profile',
+            ProviderType.CLINIC: 'clinic_profile',
+            ProviderType.LABORATORY: 'laboratory_profile',
+            ProviderType.VTC: 'vtc_profile',
+            ProviderType.SELLER: 'seller_profile',
+        }.get(self.provider_type)
+        return getattr(self, profile_attr, None) if profile_attr else None
 
 
 # Note: Doctor, Nurse, Clinic, Laboratory, VTC, and Seller models

@@ -1,7 +1,10 @@
 from django.db import models
 from django.core.validators import MinValueValidator
+from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 from decimal import Decimal
+
+from common.validators import validate_latitude, validate_longitude
 
 
 class RequestStatus(models.TextChoices):
@@ -103,8 +106,12 @@ class NurseServiceRequest(models.Model):
         help_text=_("Link to patient's saved address")
     )
     # Option 2: Inline location data (for one-time locations)
-    latitude = models.DecimalField(max_digits=9, decimal_places=6)
-    longitude = models.DecimalField(max_digits=9, decimal_places=6)
+    latitude = models.DecimalField(
+        max_digits=9, decimal_places=6, validators=[validate_latitude]
+    )
+    longitude = models.DecimalField(
+        max_digits=9, decimal_places=6, validators=[validate_longitude]
+    )
     city = models.CharField(max_length=100)
     state = models.CharField(max_length=100, blank=True)
     address_line = models.CharField(max_length=500, blank=True)
@@ -134,6 +141,17 @@ class NurseServiceRequest(models.Model):
         indexes = [
             models.Index(fields=['status', '-created_at']),
             models.Index(fields=['city', 'status']),
+            models.Index(fields=['patient_user', '-created_at']),
+            models.Index(fields=['accepted_nurse', '-created_at']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(patient_user__isnull=False, patient_record__isnull=True) |
+                    models.Q(patient_user__isnull=True, patient_record__isnull=False)
+                ),
+                name='nurse_request_patient_xor',
+            ),
         ]
 
     def __str__(self):
@@ -164,7 +182,15 @@ class NurseServiceRequest(models.Model):
             return self.patient_record.linked_user
         return None
 
+    def clean(self):
+        super().clean()
+        if bool(self.patient_user_id) == bool(self.patient_record_id):
+            raise ValidationError(
+                'Set exactly one of patient_user or patient_record.'
+            )
+
     def save(self, *args, **kwargs):
+        self.full_clean()
         # Ensure patient_offered_price is >= base_price (only if both are set)
         if self.patient_offered_price is not None and self.base_price is not None:
             if self.patient_offered_price < self.base_price:

@@ -542,7 +542,7 @@ class ProviderDetailSerializer(serializers.ModelSerializer):
             'status',
             'status_display',
             'refusal_reason',
-            'verified_at',
+            'approved_at',
             'created_at',
             'updated_at',
         ]
@@ -552,7 +552,7 @@ class ProviderDetailSerializer(serializers.ModelSerializer):
             'provider_type',
             'status',
             'refusal_reason',
-            'verified_at',
+            'approved_at',
             'created_at',
             'updated_at',
         ]

@@ -54,7 +54,6 @@ class AdminProviderViewSet(viewsets.ReadOnlyModelViewSet):
         return Provider.objects.select_related(
             'user',
             'approved_by',
-            'verified_by',
             'doctor_profile',
             'nurse_profile',
             'clinic_profile',

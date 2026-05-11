@@ -15,7 +15,7 @@ from services.serializers import (
     NurseServiceSerializer,
 )
 from common.permissions import IsAdmin, IsDoctor, IsNurse, IsDoctorOrClinic, IsDoctorOrClinicOrAdmin
-from common.enums import ProviderType
+from common.enums import ProviderType, UserRole
 from rest_framework import serializers
 
 
@@ -63,7 +63,7 @@ class ServiceViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Return active services for public, all for admin."""
-        if self.request.user.is_authenticated and self.request.user.role == 'ADMIN':
+        if self.request.user.is_authenticated and self.request.user.role == UserRole.ADMIN:
             return Service.objects.all()
         return Service.objects.filter(is_active=True)
     
@@ -81,7 +81,7 @@ class ServiceViewSet(viewsets.ModelViewSet):
         
         # Check if creator is a doctor - auto-attach the service
         user = self.request.user
-        if user.role == 'PROVIDER':
+        if user.role == UserRole.PROVIDER:
             try:
                 provider = user.provider_profile
                 if provider.provider_type == ProviderType.DOCTOR:

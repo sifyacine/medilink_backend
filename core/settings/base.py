@@ -91,10 +91,29 @@ INSTALLED_APPS = [
     'platform_content',  # CMS: landing page, blog, FAQs, announcements, etc.
 ]
 
-# Invoice Settings
-MEDILINK_AUTO_INVOICE_APPOINTMENTS = False  # Auto-create invoice on appointment completion
-MEDILINK_AUTO_INVOICE_NURSE_REQUESTS = False  # Auto-create invoice on nurse request completion
-MEDILINK_AUTO_SEND_INVOICES = False  # Auto-send invoices when created
+MEDILINK = {
+    'FEATURES': {
+        'AUTO_INVOICE_APPOINTMENTS': False,
+        'AUTO_INVOICE_NURSE_REQUESTS': False,
+        'AUTO_SEND_INVOICES': False,
+    },
+    'BOOKING': {
+        'MIN_NOTICE_HOURS': 1,
+        'MAX_ADVANCE_DAYS': 90,
+        'DEFAULT_DURATION_MINUTES': 30,
+    },
+    'SECURITY': {
+        'PASSWORD_RESET_EXPIRY_HOURS': 24,
+        'MAX_FAILED_LOGIN_ATTEMPTS': 5,
+        'ACCOUNT_LOCK_DURATION_MINUTES': 30,
+    },
+    'LIMITS': {
+        'MAX_ACTIVE_NURSE_REQUESTS': 5,
+        'MAX_APPOINTMENT_SERVICES': 10,
+        'PAGE_SIZE': 20,
+        'MAX_PAGE_SIZE': 100,
+    },
+}
 
 SITE_ID = 1
 

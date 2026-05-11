@@ -11,6 +11,7 @@ from rest_framework.authtoken.models import Token
 
 from accounts.serializers.user import UserSerializer
 from accounts.services import get_or_create_auth_token
+from common.enums import UserRole
 
 
 @api_view(['POST'])
@@ -81,7 +82,7 @@ def login(request):
         )
     
     # CRITICAL: Check provider approval status
-    if user.role == 'PROVIDER':
+    if user.role == UserRole.PROVIDER:
         try:
             from providers.models import Provider
             from common.enums import ProviderStatus
@@ -147,7 +148,7 @@ def login(request):
     user_data = UserSerializer(user).data
 
     # If this is a provider, enrich response with provider_type info
-    if user.role == 'PROVIDER':
+    if user.role == UserRole.PROVIDER:
         try:
             from providers.models import Provider
             provider = user.provider_profile

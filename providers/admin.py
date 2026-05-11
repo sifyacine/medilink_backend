@@ -18,10 +18,10 @@ from providers.models import (
 @admin.register(Provider)
 class ProviderAdmin(admin.ModelAdmin):
     """Admin interface for Provider model."""
-    list_display = ['user', 'provider_type', 'status', 'verified_at', 'created_at']
+    list_display = ['user', 'provider_type', 'status', 'approved_at', 'created_at']
     list_filter = ['status', 'provider_type', 'created_at']
     search_fields = ['user__email']
-    readonly_fields = ['created_at', 'updated_at', 'verified_at']
+    readonly_fields = ['created_at', 'updated_at', 'approved_at']
     ordering = ['-created_at']
 
 

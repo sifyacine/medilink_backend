@@ -6,7 +6,7 @@ from rest_framework.authtoken.models import Token
 from django.db import transaction
 
 from accounts.models import User
-from common.enums import UserRole
+from common.enums import UserRole, ProviderType
 
 User = get_user_model()
 
@@ -27,7 +27,7 @@ def _apply_identity_fields(user, extra_data):
 
 def _ensure_provider_subtype(provider, provider_type, extra_data):
     """Create the subtype profile if it does not already exist."""
-    if provider_type == 'DOCTOR':
+    if provider_type == ProviderType.DOCTOR:
         from providers.models.doctor import Doctor
 
         if hasattr(provider, 'doctor_profile'):
@@ -46,7 +46,7 @@ def _ensure_provider_subtype(provider, provider_type, extra_data):
             degree_document=extra_data.get('degree_document'),
         )
 
-    if provider_type == 'NURSE':
+    if provider_type == ProviderType.NURSE:
         from providers.models.nurse import Nurse
 
         if hasattr(provider, 'nurse_profile'):

@@ -22,6 +22,7 @@ from .models import (
 )
 from accounts.models import User
 from providers.models.provider import Provider
+from common.enums import ProviderType
 
 
 @dataclass
@@ -762,7 +763,7 @@ class InvoicePDFData:
         }
         
         # Add type-specific details
-        if provider.provider_type == 'DOCTOR' and hasattr(provider, 'doctor_profile'):
+        if provider.provider_type == ProviderType.DOCTOR and hasattr(provider, 'doctor_profile'):
             doctor = provider.doctor_profile
             details['license_number'] = getattr(doctor, 'license_number', '')
             details['specialty'] = getattr(doctor, 'specialty', '')

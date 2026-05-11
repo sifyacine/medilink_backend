@@ -382,6 +382,15 @@ class Invoice(models.Model):
             models.Index(fields=['issue_date']),
             models.Index(fields=['appointment']),
         ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(patient_user__isnull=False, patient_record__isnull=True) |
+                    models.Q(patient_user__isnull=True, patient_record__isnull=False)
+                ),
+                name='invoice_patient_xor',
+            ),
+        ]
     
     def __str__(self):
         patient_name = self.get_patient_display_name()

@@ -10,6 +10,7 @@ Provides business logic for:
 from datetime import datetime, date, time, timedelta
 from typing import List, Tuple, Optional
 from django.db.models import Q
+from django.db import transaction, OperationalError
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
@@ -406,25 +407,48 @@ class AppointmentService:
         else:
             created_by_role = CreatedByRole.PATIENT
         
-        # Create the appointment
-        appointment = Appointment.objects.create(
-            provider=provider,
-            patient_user=patient_user,
-            patient_record=patient_record,
-            service=service,
-            scheduled_date=scheduled_date,
-            scheduled_time=scheduled_time,
-            duration_minutes=duration_minutes,
-            location_type=location_type,
-            reason=reason,
-            notes=notes,
-            clinic_address=clinic_address,
-            home_address=home_address,
-            meeting_link=meeting_link,
-            created_by=created_by_user,
-            created_by_role=created_by_role
-        )
-        
+        # Create inside a transaction with a row-level lock so concurrent
+        # requests cannot slip through the conflict check simultaneously.
+        with transaction.atomic():
+            try:
+                Appointment.objects.select_for_update(nowait=True).filter(
+                    provider=provider,
+                    scheduled_date=scheduled_date,
+                ).exists()
+            except OperationalError:
+                raise ValidationError(
+                    "Provider schedule is being updated. Please try again."
+                )
+
+            # Re-check availability inside the lock to be race-condition safe.
+            is_available, message = SchedulingService.check_provider_available(
+                provider=provider,
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time,
+                duration_minutes=duration_minutes,
+                location_type=location_type,
+            )
+            if not is_available:
+                raise ValidationError(message)
+
+            appointment = Appointment.objects.create(
+                provider=provider,
+                patient_user=patient_user,
+                patient_record=patient_record,
+                service=service,
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time,
+                duration_minutes=duration_minutes,
+                location_type=location_type,
+                reason=reason,
+                notes=notes,
+                clinic_address=clinic_address,
+                home_address=home_address,
+                meeting_link=meeting_link,
+                created_by=created_by_user,
+                created_by_role=created_by_role,
+            )
+
         return appointment
     
     @classmethod

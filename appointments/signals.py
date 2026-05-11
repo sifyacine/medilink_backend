@@ -19,24 +19,18 @@ from .notifications import AppointmentNotifier
 logger = logging.getLogger(__name__)
 
 
-# Track status changes
-_previous_status = {}
-
-# Track data from deleted appointments so post_delete can broadcast
-_deleted_appointment_data = {}
-
-
 @receiver(pre_save, sender=Appointment)
 def track_appointment_status_change(sender, instance, **kwargs):
-    """Track status before save to detect changes."""
+    """Store previous status on the instance to avoid thread-unsafe module-level state."""
     if instance.pk:
         try:
-            old_instance = Appointment.objects.get(pk=instance.pk)
-            _previous_status[instance.pk] = old_instance.status
+            instance._previous_status = (
+                Appointment.objects.only('status').get(pk=instance.pk).status
+            )
         except Appointment.DoesNotExist:
-            _previous_status[instance.pk] = None
+            instance._previous_status = None
     else:
-        _previous_status[instance.pk] = None
+        instance._previous_status = None
 
 
 @receiver(post_save, sender=Appointment)
@@ -51,7 +45,7 @@ def handle_appointment_save(sender, instance, created, **kwargs):
     # Capture values before the lambda closes over the mutable instance
     appointment_id = instance.pk
     is_created = created
-    previous_status = _previous_status.pop(instance.pk, None)
+    previous_status = getattr(instance, '_previous_status', None)
     current_status = instance.status
 
     def _notify():
@@ -292,7 +286,7 @@ def capture_appointment_before_delete(sender, instance, **kwargs):
     Capture appointment data before deletion so post_delete can broadcast
     a WebSocket event (FK relationships are still accessible here).
     """
-    _deleted_appointment_data[instance.pk] = {
+    instance._captured_delete_data = {
         'appointment_id': str(instance.pk),
         'provider_id': instance.provider_id,
         'patient_user_id': instance.patient_user_id,
@@ -305,7 +299,7 @@ def broadcast_appointment_deleted(sender, instance, **kwargs):
     After an appointment is deleted (e.g. from Django admin), broadcast an
     appointment_deleted event so connected frontends can remove it from their lists.
     """
-    captured = _deleted_appointment_data.pop(instance.pk, None)
+    captured = getattr(instance, '_captured_delete_data', None)
     if not captured:
         return
 

@@ -8,7 +8,7 @@ This module provides shared helper functions used across multiple apps:
 - Query optimization helpers
 """
 from typing import Optional, Any, Dict, List
-from django.db.models import Model
+from django.db.models import Model, Prefetch
 
 
 # =============================================================================
@@ -280,16 +280,31 @@ def get_appointment_select_related() -> List[str]:
     ]
 
 
-def get_appointment_prefetch_related() -> List[str]:
+def get_appointment_prefetch_related() -> list:
     """
     Get standard prefetch_related fields for appointment queries.
-    
+
+    Includes Prefetch objects for custom service pricing so serializers
+    can resolve provider-specific prices without issuing per-item DB queries.
+
     Returns:
-        List of related field names for prefetch_related()
+        List of strings and Prefetch objects for prefetch_related()
     """
+    from services.models import DoctorService, NurseService
+
     return [
         'reminders',
         'appointment_services__service',
+        Prefetch(
+            'provider__doctor_profile__services',
+            queryset=DoctorService.objects.select_related('service'),
+            to_attr='prefetched_custom_services',
+        ),
+        Prefetch(
+            'provider__nurse_profile__services',
+            queryset=NurseService.objects.select_related('service'),
+            to_attr='prefetched_custom_services',
+        ),
     ]
 
 

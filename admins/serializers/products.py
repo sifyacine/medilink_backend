@@ -6,6 +6,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from admins.models.products import MediLinkProduct, MediLinkProductImage, MediLinkSale
+from common.enums import UserRole
 
 
 class MediLinkProductImageSerializer(serializers.ModelSerializer):
@@ -103,7 +104,7 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
 
     def get_added_by_display(self, obj):
         """Show MediLink for admin-created products, seller info otherwise."""
-        if obj.added_by is None or getattr(obj.added_by, 'role', None) == 'ADMIN':
+        if obj.added_by is None or getattr(obj.added_by, 'role', None) == UserRole.ADMIN:
             return 'MediLink'
         return obj.added_by.get_full_name() or obj.added_by.email
 
@@ -199,7 +200,7 @@ class MediLinkProductListSerializer(serializers.ModelSerializer):
         return obj.image.url
 
     def get_added_by_display(self, obj):
-        if obj.added_by is None or getattr(obj.added_by, 'role', None) == 'ADMIN':
+        if obj.added_by is None or getattr(obj.added_by, 'role', None) == UserRole.ADMIN:
             return 'MediLink'
         return obj.added_by.get_full_name() or obj.added_by.email
 

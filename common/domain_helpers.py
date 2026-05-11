@@ -276,7 +276,8 @@ class AppointmentPermissionHelper:
         
         # Patient can only reschedule PENDING appointments
         if appointment.patient_user and appointment.patient_user == user:
-            if appointment.status == 'PENDING':
+            from appointments.models import AppointmentStatus
+            if appointment.status == AppointmentStatus.PENDING:
                 return True, ""
             return False, "Patients can only reschedule pending appointments. Contact the provider."
         

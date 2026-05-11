@@ -15,7 +15,7 @@ from specialties.serializers import (
     DoctorSpecialtyCreateSerializer,
 )
 from common.permissions import IsAdmin, IsDoctor, IsDoctorOrClinic, IsDoctorOrClinicOrAdmin
-from common.enums import ProviderType
+from common.enums import ProviderType, UserRole
 from rest_framework import serializers
 
 
@@ -63,7 +63,7 @@ class SpecialtyViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Return active specialties for public, all for admin."""
-        if self.request.user.is_authenticated and self.request.user.role == 'ADMIN':
+        if self.request.user.is_authenticated and self.request.user.role == UserRole.ADMIN:
             return Specialty.objects.all()
         return Specialty.objects.filter(is_active=True)
     
@@ -78,7 +78,7 @@ class SpecialtyViewSet(viewsets.ModelViewSet):
         
         # Check if creator is a doctor - auto-attach the specialty
         user = self.request.user
-        if user.role == 'PROVIDER':
+        if user.role == UserRole.PROVIDER:
             try:
                 provider = user.provider_profile
                 if provider.provider_type == ProviderType.DOCTOR:

@@ -39,7 +39,6 @@ class ProviderStatusSerializer(serializers.ModelSerializer):
             'status',
             'refusal_reason',
             'approved_at',
-            'verified_at',  # Legacy field
             'provider_type',
             'provider_type_display',
         ]
@@ -48,7 +47,6 @@ class ProviderStatusSerializer(serializers.ModelSerializer):
             'status',
             'refusal_reason',
             'approved_at',
-            'verified_at',
             'provider_type',
             'provider_type_display',
         ]
