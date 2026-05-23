@@ -64,6 +64,9 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
             'profit_margin',
             'rating',
             'rating_count',
+            'is_for_sale',
+            'is_for_rent',
+            'rental_price_per_day',
             'is_active',
             'added_by',
             'added_by_display',
@@ -118,6 +121,20 @@ class MediLinkProductSerializer(serializers.ModelSerializer):
             )
         if discount_type == 'PERCENTAGE' and discount_value > 100:
             raise serializers.ValidationError({'discount_value': 'Percentage discount cannot exceed 100.'})
+
+        is_for_rent = data.get('is_for_rent', getattr(self.instance, 'is_for_rent', False))
+        rental_price = data.get('rental_price_per_day', getattr(self.instance, 'rental_price_per_day', None))
+        if is_for_rent and (rental_price is None or rental_price <= 0):
+            raise serializers.ValidationError(
+                {'rental_price_per_day': 'A positive rental price per day is required when is_for_rent is True.'}
+            )
+
+        is_for_sale = data.get('is_for_sale', getattr(self.instance, 'is_for_sale', True))
+        if not is_for_sale and not is_for_rent:
+            raise serializers.ValidationError(
+                'A product must be available for sale, rent, or both.'
+            )
+
         return data
 
     def create(self, validated_data):
@@ -180,6 +197,9 @@ class MediLinkProductListSerializer(serializers.ModelSerializer):
             'is_low_stock',
             'rating',
             'rating_count',
+            'is_for_sale',
+            'is_for_rent',
+            'rental_price_per_day',
             'is_active',
             'added_by_display',
             'created_at',

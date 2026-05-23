@@ -55,6 +55,9 @@ class PublicProductListSerializer(serializers.ModelSerializer):
             'is_low_stock',
             'rating',
             'rating_count',
+            'is_for_sale',
+            'is_for_rent',
+            'rental_price_per_day',
             'created_at',
         ]
 
@@ -102,6 +105,9 @@ class PublicProductDetailSerializer(serializers.ModelSerializer):
             'is_low_stock',
             'rating',
             'rating_count',
+            'is_for_sale',
+            'is_for_rent',
+            'rental_price_per_day',
             'created_at',
             'updated_at',
         ]

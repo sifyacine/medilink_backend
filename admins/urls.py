@@ -22,6 +22,8 @@ from admins.views import (
     AdminNurseServiceViewSet,
     AdminDoctorServiceViewSet,
     AdminProviderCustomServiceViewSet,
+    AdminSpecialtyViewSet,
+    AdminDoctorSpecialtyViewSet,
 )
 
 app_name = 'admins'
@@ -39,6 +41,8 @@ router.register(r'services', AdminServiceViewSet, basename='admin-services')
 router.register(r'nurse-services', AdminNurseServiceViewSet, basename='admin-nurse-services')
 router.register(r'doctor-services', AdminDoctorServiceViewSet, basename='admin-doctor-services')
 router.register(r'custom-services', AdminProviderCustomServiceViewSet, basename='admin-custom-services')
+router.register(r'specialties', AdminSpecialtyViewSet, basename='admin-specialties')
+router.register(r'doctor-specialties', AdminDoctorSpecialtyViewSet, basename='admin-doctor-specialties')
 
 urlpatterns = [
     path('', include(router.urls)),

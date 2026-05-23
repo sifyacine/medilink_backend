@@ -20,6 +20,10 @@ from admins.views.services import (
         AdminDoctorServiceViewSet,
         AdminProviderCustomServiceViewSet,
 )
+from admins.views.specialties import (
+        AdminSpecialtyViewSet,
+        AdminDoctorSpecialtyViewSet,
+)
 
 __all__ = [
         'AdminProviderViewSet',
@@ -40,4 +44,6 @@ __all__ = [
         'AdminNurseServiceViewSet',
         'AdminDoctorServiceViewSet',
         'AdminProviderCustomServiceViewSet',
+        'AdminSpecialtyViewSet',
+        'AdminDoctorSpecialtyViewSet',
 ]

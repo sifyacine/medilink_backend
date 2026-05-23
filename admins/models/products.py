@@ -78,6 +78,22 @@ class MediLinkProduct(models.Model):
         validators=[MinValueValidator(Decimal('0'))],
     )
 
+    # Acquisition type — a product can be sold, rented, or both
+    is_for_sale = models.BooleanField(
+        default=True,
+        help_text='Product can be purchased outright.',
+    )
+    is_for_rent = models.BooleanField(
+        default=False,
+        help_text='Product can be rented.',
+    )
+    rental_price_per_day = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        null=True, blank=True,
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text='Daily rental price (required when is_for_rent is True).',
+    )
+
     # Ratings (0–5, can be set manually or computed from sales)
     rating = models.DecimalField(
         max_digits=3, decimal_places=2,
@@ -114,10 +130,11 @@ class MediLinkProduct(models.Model):
         return self.name
 
     def save(self, *args, **kwargs):
-        # Currency is platform-standardized to DZD for this module.
         self.currency = 'DZD'
         if not self.discount_type:
             self.discount_value = Decimal('0')
+        if not self.is_for_rent:
+            self.rental_price_per_day = None
         super().save(*args, **kwargs)
 
     @property
